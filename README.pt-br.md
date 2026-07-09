@@ -15,7 +15,7 @@ Uma interface desktop para o agente de código [zero](https://github.com/Gitlawb
 No Linux, execute:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Gitlawb/zero-desktop/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/pdl-clay/zero-desktop/main/scripts/install.sh | bash
 ```
 
 Para mais detalhes, veja o [Guia de Instalação no Linux](./docs/pt-br/distribution/linux-installation.md).

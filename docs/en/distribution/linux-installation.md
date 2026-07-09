@@ -7,7 +7,7 @@ This document describes how users install **zero-desktop** on Linux during the a
 The fastest way to install zero-desktop on any Linux distribution is via the official install script:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Gitlawb/zero-desktop/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/pdl-clay/zero-desktop/main/scripts/install.sh | bash
 ```
 
 ### What the script does
@@ -29,7 +29,7 @@ curl -fsSL https://raw.githubusercontent.com/Gitlawb/zero-desktop/main/scripts/i
 
 ## Manual installation
 
-If you prefer not to run the script, you can download the AppImage manually from the [GitHub Releases](https://github.com/Gitlawb/zero-desktop/releases) page:
+If you prefer not to run the script, you can download the AppImage manually from the [GitHub Releases](https://github.com/pdl-clay/zero-desktop/releases) page:
 
 ```bash
 chmod +x zero-desktop-vX.Y.Z-linux-x86_64.AppImage
@@ -50,7 +50,7 @@ On first launch, zero-desktop checks whether the [zero](https://github.com/Gitla
 Re-run the install script to update to the latest version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Gitlawb/zero-desktop/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/pdl-clay/zero-desktop/main/scripts/install.sh | bash
 ```
 
 The script replaces the existing AppImage while preserving your local data.

@@ -8,7 +8,7 @@ import socketserver
 import sys
 
 PORT = int(os.environ.get("PORT", "9876"))
-REPO = os.environ.get("REPO", "Gitlawb/zero-desktop")
+REPO = os.environ.get("REPO", "pdl-clay/zero-desktop")
 VERSION = os.environ.get("VERSION", "v0.1.0")
 ARCH = os.environ.get("ARCH", "x86_64")
 
@@ -40,7 +40,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         # Serve the install script from the project root
         if path == "/scripts/install.sh":
             return INSTALL_SCRIPT
-        # Map /Gitlawb/zero-desktop/releases/download/v0.1.0/<file> to local files
+        # Map /pdl-clay/zero-desktop/releases/download/v0.1.0/<file> to local files
         expected_prefix = f"/{REPO}/releases/download/{VERSION}/"
         if path.startswith(expected_prefix):
             filename = path[len(expected_prefix):]

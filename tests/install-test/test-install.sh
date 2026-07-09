@@ -33,7 +33,7 @@ SERVER_PID=$!
 sleep 2
 
 # Verify server is up
-if ! curl -fsSL "$BASE_URL/Gitlawb/zero-desktop/releases/download/v0.1.0/zero-desktop-v0.1.0-linux-x86_64.AppImage" >/dev/null; then
+if ! curl -fsSL "$BASE_URL/pdl-clay/zero-desktop/releases/download/v0.1.0/zero-desktop-v0.1.0-linux-x86_64.AppImage" >/dev/null; then
     echo "[test] Server did not start" >&2
     exit 1
 fi

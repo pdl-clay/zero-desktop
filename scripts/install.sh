@@ -2,9 +2,9 @@
 set -euo pipefail
 
 # zero-desktop install script for Linux
-# Usage: curl -fsSL https://raw.githubusercontent.com/Gitlawb/zero-desktop/main/scripts/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/pdl-clay/zero-desktop/main/scripts/install.sh | bash
 
-REPO="${ZERO_DESKTOP_REPO:-Gitlawb/zero-desktop}"
+REPO="${ZERO_DESKTOP_REPO:-pdl-clay/zero-desktop}"
 BASE_URL="${ZERO_DESKTOP_BASE_URL:-https://github.com}"
 INSTALL_DIR="${ZERO_DESKTOP_INSTALL_DIR:-$HOME/.local/apps/zero-desktop}"
 BIN_DIR="${ZERO_DESKTOP_BIN_DIR:-$HOME/.local/bin}"
