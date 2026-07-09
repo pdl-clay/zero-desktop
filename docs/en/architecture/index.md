@@ -17,6 +17,10 @@ This section collects high-level design decisions and architecture for **zero-de
 
 - [Linux Installation Guide](../distribution/linux-installation.md)
 
+## Features
+
+- [zero-bridge: Connection to the zero CLI](../features/zero-bridge.md)
+
 ## Convention
 
 Every significant new feature or architectural decision must be documented here in `.md` files. This rule is reflected in [`AGENTS.md`](../../../AGENTS.md).

@@ -17,6 +17,10 @@ Esta seção reúne as decisões e o design de alto nível do **zero-desktop**.
 
 - [Guia de Instalação no Linux](../distribution/linux-installation.md)
 
+## Funcionalidades
+
+- [zero-bridge: Conexão com o zero CLI](../features/zero-bridge.md)
+
 ## Convenção
 
 Toda nova funcionalidade ou decisão arquitetural significativa deve ser documentada aqui em arquivos `.md`. Esta regra está refletida no [`AGENTS.md`](../../../AGENTS.md).
