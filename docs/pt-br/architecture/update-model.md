@@ -16,7 +16,7 @@ Este documento define como o **zero-desktop** gerencia suas próprias atualizaç
 Durante a alpha no Linux, o zero-desktop é distribuído como **AppImage** e atualizado executando novamente o script de instalação:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<org>/zero-desktop/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Gitlawb/zero-desktop/main/scripts/install.sh | bash
 ```
 
 Veja [`docs/pt-br/distribution/linux-installation.md`](../distribution/linux-installation.md) para mais detalhes.

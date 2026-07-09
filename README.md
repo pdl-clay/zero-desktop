@@ -15,7 +15,7 @@ A desktop GUI for the [zero](https://github.com/Gitlawb/zero) coding agent, buil
 On Linux, run:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<org>/zero-desktop/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Gitlawb/zero-desktop/main/scripts/install.sh | bash
 ```
 
 For details, see the [Linux Installation Guide](./docs/en/distribution/linux-installation.md).

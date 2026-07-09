@@ -4,3 +4,8 @@ dist/
 *.log
 .DS_Store
 AGENTS.md
+
+# Test artifacts
+tests/install-test/zero-desktop-*.AppImage
+tests/install-test/zero-desktop-*.AppImage.sha256
+tests/install-test/scripts/install.sh
