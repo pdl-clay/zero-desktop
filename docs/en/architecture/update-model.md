@@ -13,14 +13,22 @@ This document defines how **zero-desktop** manages its own updates without inter
 
 ## 2. zero-desktop Updates
 
-zero-desktop will use the **official Tauri updater**:
+During the Linux alpha, zero-desktop is distributed as an **AppImage** and updated by re-running the install script:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/<org>/zero-desktop/main/scripts/install.sh | bash
+```
+
+See [`docs/en/distribution/linux-installation.md`](../distribution/linux-installation.md) for details.
+
+In the future, zero-desktop may adopt the **official Tauri updater** for in-app updates:
 
 - JSON endpoint with release metadata.
 - Signature verification (public key embedded in the app).
 - Silent download and installation when a new version is available.
 - UI notification when an update is ready.
 
-Configuration details (endpoint URL, public key) will be defined later, before the first release.
+Configuration details (endpoint URL, public key) will be defined later, before the first stable release.
 
 ## 3. zero CLI Detection and Installation
 

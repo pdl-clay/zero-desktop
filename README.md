@@ -10,12 +10,24 @@ A desktop GUI for the [zero](https://github.com/Gitlawb/zero) coding agent, buil
 - Does not bundle or modify the `zero` binary.
 - Keeps zero-desktop updates separate from zero CLI updates.
 
+## Install
+
+On Linux, run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/<org>/zero-desktop/main/scripts/install.sh | bash
+```
+
+For details, see the [Linux Installation Guide](./docs/en/distribution/linux-installation.md).
+
 ## Documentation
 
 - [Architecture (EN)](./docs/en/architecture/index.md)
 - [Arquitetura (PT-BR)](./docs/pt-br/architecture/index.md)
+- [Linux Installation (EN)](./docs/en/distribution/linux-installation.md)
+- [Instalação no Linux (PT-BR)](./docs/pt-br/distribution/linux-installation.md)
 
-## Quick Start
+## Quick Start (development)
 
 ```bash
 pnpm install

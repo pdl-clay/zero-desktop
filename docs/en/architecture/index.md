@@ -11,6 +11,11 @@ This section collects high-level design decisions and architecture for **zero-de
 ## Registered Decisions
 
 1. [Connection via Stream-JSON instead of MCP or HTTP](./decisions/001-connection-via-stream-json.md)
+2. [Linux Distribution via AppImage + Install Script](./decisions/002-linux-appimage-plus-install-script.md)
+
+## Distribution
+
+- [Linux Installation Guide](../distribution/linux-installation.md)
 
 ## Convention
 
