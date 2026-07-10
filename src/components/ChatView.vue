@@ -11,6 +11,17 @@
     <!-- Messages -->
     <div class="col q-pa-md scroll" ref="messagesContainer">
       <div
+        v-if="zeroStore.messages.length === 0 && !zeroStore.currentResponse"
+        class="flex flex-center full-height text-grey-6 text-center"
+      >
+        <div>
+          <q-icon name="chat_bubble_outline" size="48px" class="q-mb-sm" />
+          <div class="text-body1">Envie uma mensagem para iniciar</div>
+          <div class="text-caption">uma nova sessão</div>
+        </div>
+      </div>
+
+      <div
         v-for="(message, index) in zeroStore.messages"
         :key="index"
         class="q-mb-sm"
@@ -45,24 +56,6 @@
         :disable="!zeroStore.isConnected"
         bottom-slots
       >
-        <template v-slot:prepend>
-          <q-spinner
-            v-if="zeroStore.isConnecting"
-            size="20px"
-          />
-          <q-icon
-            v-else-if="zeroStore.isConnected"
-            name="fiber_manual_record"
-            color="positive"
-            size="12px"
-          />
-          <q-icon
-            v-else
-            name="fiber_manual_record"
-            color="grey"
-            size="12px"
-          />
-        </template>
         <template v-slot:after>
           <q-btn
             round

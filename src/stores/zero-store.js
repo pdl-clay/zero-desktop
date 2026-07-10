@@ -66,7 +66,6 @@ export const useZeroStore = defineStore('zero', {
         await this.setupListeners()
         await startZeroSession(cwd, sessionId)
         this.isConnected = true
-        this.addSystemMessage('Conectado em ' + cwd)
       } catch (error) {
         this.zeroError = error
         this.isConnected = false

@@ -3,7 +3,7 @@
     <q-drawer
       v-model="leftDrawerOpen"
       show-if-above
-      :width="300"
+      :width="sessionPanelOpen ? 300 : 60"
       :breakpoint="700"
       bordered
       :class="$q.dark.isActive ? 'bg-dark' : 'bg-grey-2'"
@@ -17,11 +17,21 @@
 
           <q-separator class="full-width q-mb-sm" />
 
-          <div class="workspace-column col">
+          <div
+            ref="workspaceColumnRef"
+            class="workspace-column col"
+            :class="{ 'is-dragging': isDragging }"
+          >
             <div
-              v-for="ws in workspacesStore.workspaces"
+              v-for="(ws, index) in workspacesStore.workspaces"
               :key="ws.path"
               class="workspace-avatar-wrapper q-mb-sm"
+              :class="{
+                'drag-source': isDragging && dragIndex === index,
+                'drop-before': isDragging && dragInsertIndex === index,
+                'drop-after': isDragging && dragInsertIndex === workspacesStore.workspaces.length && index === workspacesStore.workspaces.length - 1,
+              }"
+              @mousedown="onAvatarMouseDown($event, index)"
             >
               <div
                 class="workspace-avatar cursor-pointer"
@@ -92,30 +102,32 @@
             <q-tooltip>Configurações</q-tooltip>
           </q-btn>
 
-          
-        </div>
-
+          </div>
         <!-- Right session panel -->
-        <div class="col column q-pa-sm" style="min-width: 0">
-          <!-- Zero status -->
-          <q-banner
-            v-if="!zeroStore.hasZero"
-            class="bg-negative text-white q-mb-xs rounded-borders"
-            dense
-          >
-            {{ $t('chat.zeroNotFound') }}
-          </q-banner>
-
-          <template v-if="workspacesStore.hasActive">
-            <div class="text-caption text-grey-7 q-mb-xs">
-              {{ workspacesStore.active?.name || '' }}
+        <div :class="['col column session-panel', { 'session-panel--closed': !sessionPanelOpen }]" style="min-width: 0">
+            <div class="row items-center q-px-sm q-py-xs">
+              <span class="text-caption text-grey-7 text-weight-medium">
+                {{ workspacesStore.active?.name || 'Zero' }}
+              </span>
             </div>
 
-            <q-separator spaced />
+          <q-separator />
 
-            <div class="text-caption text-grey-6 q-mb-sm">
-              Sessões ({{ zeroStore.sessions.length }})
-            </div>
+          <div class="q-pa-sm col column" style="min-height: 0">
+            <!-- Zero status -->
+            <q-banner
+              v-if="!zeroStore.hasZero"
+              class="bg-negative text-white q-mb-xs rounded-borders"
+              dense
+            >
+              {{ $t('chat.zeroNotFound') }}
+            </q-banner>
+
+            <template v-if="workspacesStore.hasActive">
+
+              <div class="text-caption text-grey-6 q-mb-sm">
+                Sessões ({{ zeroStore.sessions.length }})
+              </div>
 
             <q-scroll-area class="col">
               <!-- Session list -->
@@ -172,6 +184,7 @@
                 </div>
 
                 <q-item
+                  v-if="zeroStore.sessions.length > 0"
                   clickable
                   v-ripple
                   class="rounded-borders q-px-sm text-grey-6"
@@ -196,8 +209,25 @@
               </div>
             </div>
           </template>
+          </div>
         </div>
       </div>
+
+      <!-- Toggle button overlaid on right edge -->
+      <q-btn
+        round
+        dense
+        unelevated
+        size="sm"
+        :icon="sessionPanelOpen ? 'chevron_left' : 'chevron_right'"
+        :color="$q.dark.isActive ? 'grey-7' : 'grey-5'"
+        :text-color="$q.dark.isActive ? 'grey-2' : 'white'"
+        class="session-toggle-btn"
+        :style="{ top: sessionPanelOpen ? '3%' : '50%', transform: sessionPanelOpen ? 'translateX(50%)' : 'translate(50%, -50%)' }"
+        @click="sessionPanelOpen = !sessionPanelOpen"
+      >
+        <q-tooltip>{{ sessionPanelOpen ? 'Fechar painel' : 'Abrir painel' }}</q-tooltip>
+      </q-btn>
     </q-drawer>
 
     <!-- Main content -->
@@ -225,6 +255,31 @@ const $q = useQuasar()
 const zeroStore = useZeroStore()
 const workspacesStore = useWorkspacesStore()
 const leftDrawerOpen = ref(true)
+
+const isSmallScreen = $q.screen.lt.md
+const sessionPanelOpen = ref(!isSmallScreen)
+
+const dragIndex = ref(-1)
+const dragInsertIndex = ref(-1)
+const isDragging = ref(false)
+const dragClone = ref(null)
+const dragStartMouseX = ref(0)
+const dragStartMouseY = ref(0)
+const dragHoldTimer = ref(null)
+const workspaceColumnRef = ref(null)
+
+const DRAG_HOLD_DELAY = 80
+
+watch(
+  () => $q.screen.width,
+  (width) => {
+    if (width < 1024) {
+      sessionPanelOpen.value = false
+    } else {
+      sessionPanelOpen.value = true
+    }
+  },
+)
 
 const THEME_KEY = 'zero-desktop-theme'
 
@@ -333,6 +388,151 @@ async function onBrowseAndAdd() {
 async function onRemoveWorkspace(ws) {
   workspacesStore.remove(ws.path)
 }
+
+function onAvatarMouseDown(event, index) {
+  if (event.button !== 0) return
+
+  dragIndex.value = index
+  dragInsertIndex.value = index
+  isDragging.value = false
+  dragStartMouseX.value = event.clientX
+  dragStartMouseY.value = event.clientY
+
+  const wrapper = event.currentTarget
+  wrapper.addEventListener('click', preventClickAfterDrag, true)
+
+  dragHoldTimer.value = setTimeout(() => {
+    if (dragIndex.value === -1) return
+    isDragging.value = true
+    createDragClone()
+  }, DRAG_HOLD_DELAY)
+
+  document.addEventListener('mousemove', onDocumentMouseMove)
+  document.addEventListener('mouseup', onDocumentMouseUp)
+}
+
+function preventClickAfterDrag(event) {
+  if (isDragging.value) {
+    event.stopPropagation()
+    event.preventDefault()
+  }
+  event.currentTarget.removeEventListener('click', preventClickAfterDrag, true)
+}
+
+function cancelDrag() {
+  if (dragHoldTimer.value) {
+    clearTimeout(dragHoldTimer.value)
+    dragHoldTimer.value = null
+  }
+  if (dragClone.value) {
+    dragClone.value.remove()
+    dragClone.value = null
+  }
+  dragIndex.value = -1
+  dragInsertIndex.value = -1
+  isDragging.value = false
+  document.removeEventListener('mousemove', onDocumentMouseMove)
+  document.removeEventListener('mouseup', onDocumentMouseUp)
+}
+
+function onDocumentMouseMove(event) {
+  if (dragIndex.value === -1) return
+
+  const deltaX = Math.abs(event.clientX - dragStartMouseX.value)
+  const deltaY = Math.abs(event.clientY - dragStartMouseY.value)
+
+  // Antes de ativar o drag, se o usuário se mover muito consideramos um clique/swipe e cancelamos
+  if (!isDragging.value && dragHoldTimer.value && (deltaX > 15 || deltaY > 15)) {
+    cancelDrag()
+    return
+  }
+
+  if (!isDragging.value) return
+
+  updateDragClonePosition(event.clientX, event.clientY)
+  updateDragInsertIndex(event.clientY)
+}
+
+function createDragClone() {
+  const column = workspaceColumnRef.value
+  if (!column) return
+  const wrappers = column.querySelectorAll('.workspace-avatar-wrapper')
+  const sourceWrapper = wrappers[dragIndex.value]
+  if (!sourceWrapper) return
+
+  const sourceAvatar = sourceWrapper.querySelector('.workspace-avatar')
+  if (!sourceAvatar) return
+
+  const rect = sourceAvatar.getBoundingClientRect()
+  const clone = sourceAvatar.cloneNode(true)
+  clone.classList.add('dragging-clone')
+  clone.style.position = 'fixed'
+  clone.style.left = `${rect.left}px`
+  clone.style.top = `${rect.top}px`
+  clone.style.width = `${rect.width}px`
+  clone.style.height = `${rect.height}px`
+  clone.style.margin = '0'
+  clone.style.zIndex = '9999'
+  clone.style.pointerEvents = 'none'
+  clone.style.opacity = '0.9'
+
+  document.body.appendChild(clone)
+  dragClone.value = clone
+}
+
+function updateDragClonePosition(clientX, clientY) {
+  if (!dragClone.value) return
+  const rect = dragClone.value.getBoundingClientRect()
+  dragClone.value.style.left = `${clientX - rect.width / 2}px`
+  dragClone.value.style.top = `${clientY - rect.height / 2}px`
+}
+
+function updateDragInsertIndex(clientY) {
+  const column = workspaceColumnRef.value
+  if (!column) return
+  const wrappers = Array.from(column.querySelectorAll('.workspace-avatar-wrapper'))
+  let newIndex = workspacesStore.workspaces.length
+  for (let i = 0; i < wrappers.length; i++) {
+    const rect = wrappers[i].getBoundingClientRect()
+    const midpoint = rect.top + rect.height / 2
+    if (clientY < midpoint) {
+      newIndex = i
+      break
+    }
+  }
+  dragInsertIndex.value = newIndex
+}
+
+function onDocumentMouseUp() {
+  if (dragHoldTimer.value) {
+    clearTimeout(dragHoldTimer.value)
+    dragHoldTimer.value = null
+  }
+
+  if (isDragging.value && dragIndex.value !== -1) {
+    const from = dragIndex.value
+    const to = dragInsertIndex.value
+    if (to !== from && to !== from + 1) {
+      workspacesStore.reorder(from, to)
+    }
+  }
+
+  if (dragClone.value) {
+    dragClone.value.remove()
+    dragClone.value = null
+  }
+
+  dragIndex.value = -1
+  dragInsertIndex.value = -1
+
+  document.removeEventListener('mousemove', onDocumentMouseMove)
+  document.removeEventListener('mouseup', onDocumentMouseUp)
+
+  // Mantém isDragging true até depois do evento de click que virá em seguida
+  setTimeout(() => {
+    isDragging.value = false
+  }, 0)
+}
 </script>
 
 <style scoped>
@@ -352,16 +552,77 @@ async function onRemoveWorkspace(ws) {
   min-height: 0;
 }
 
+.workspace-column.is-dragging {
+  cursor: grabbing;
+}
+
+.workspace-column.is-dragging .workspace-avatar-wrapper {
+  cursor: grabbing;
+}
+
+.dragging-clone {
+  pointer-events: none;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  transition: none !important;
+}
+
 .workspace-avatar-wrapper {
   position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
+  cursor: grab;
+  transition: transform 0.15s ease, opacity 0.15s ease;
+}
+
+.workspace-avatar-wrapper:active {
+  cursor: grabbing;
+}
+
+.workspace-avatar-wrapper.drag-source {
+  opacity: 0.35;
+  transform: scale(0.85);
+}
+
+.workspace-avatar-wrapper.drop-before {
+  position: relative;
+}
+
+.workspace-avatar-wrapper.drop-before::before {
+  content: '';
+  position: absolute;
+  top: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 34px;
+  height: 4px;
+  background: #19d24d;
+  border-radius: 2px;
+  box-shadow: 0 0 6px rgba(25, 210, 77, 0.7);
+  z-index: 2;
+}
+
+.workspace-avatar-wrapper.drop-after {
+  position: relative;
+}
+
+.workspace-avatar-wrapper.drop-after::after {
+  content: '';
+  position: absolute;
+  bottom: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 34px;
+  height: 4px;
+  background: #19d24d;
+  border-radius: 2px;
+  box-shadow: 0 0 6px rgba(25, 210, 77, 0.7);
+  z-index: 2;
 }
 
 .workspace-remove-btn {
   position: absolute;
-  bottom: -12px;
+  bottom: 27px;
   right: -8px;
   z-index: 1;
   opacity: 0;
@@ -414,5 +675,32 @@ async function onRemoveWorkspace(ws) {
 .session-item-wrapper:hover .session-remove-btn {
   opacity: 1;
   transform: scale(1);
+}
+
+.session-panel {
+  max-width: 240px;
+  opacity: 1;
+  transition: max-width 0.25s ease, opacity 0.2s ease, padding 0.25s ease;
+  overflow: hidden;
+}
+
+.session-panel--closed {
+  max-width: 0;
+  opacity: 0;
+  padding: 0 !important;
+}
+
+.session-toggle-btn {
+  position: absolute;
+  right: 0;
+  z-index: 100;
+  width: 26px;
+  height: 26px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+  transition: top 0.15s ease, transform 0.15s ease;
+}
+
+.session-toggle-btn:hover {
+  transform: translateX(50%) translatey(-10%) scale(1.15) !important;
 }
 </style>

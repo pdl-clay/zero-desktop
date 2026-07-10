@@ -60,6 +60,12 @@ export const useWorkspacesStore = defineStore('workspaces', {
     select(path) {
       this.activePath = path
     },
+
+    reorder(fromIndex, toIndex) {
+      const item = this.workspaces.splice(fromIndex, 1)[0]
+      this.workspaces.splice(toIndex, 0, item)
+      saveWorkspaces(this.workspaces)
+    },
   },
 })
 
