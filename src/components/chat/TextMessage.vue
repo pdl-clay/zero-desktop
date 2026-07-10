@@ -4,8 +4,7 @@
     :text-html="isMarkdown"
     :sent="message.role === 'user'"
     :bg-color="bubbleColor"
-    :text-color="message.role === 'user' ? 'white' : undefined"
-    :class="[isMarkdown ? 'md-chat-message' : '', message.role === 'assistant' ? 'chat-bubble-response' : '']"
+    :class="[isMarkdown ? 'md-chat-message' : '', bubbleClass]"
   />
 </template>
 
@@ -23,19 +22,21 @@ const renderedText = computed(() =>
   isMarkdown.value ? renderMarkdown(props.message.content) : props.message.content,
 );
 
-const bubbleColor = computed(() => {
+// Backgrounds for user/assistant are handled entirely via the .chat-bubble-*
+// classes below (translucent, theme-aware) instead of Quasar's bg-color
+// prop, which only accepts flat palette colors - that's what made the sent
+// bubble a solid opaque green instead of following the rest of ChatView's
+// subtle-tint card language (ToolCallMessage, ChatInput, response bubble).
+const bubbleColor = computed(() => (props.message.role === "system" ? "info" : undefined));
+
+const bubbleClass = computed(() => {
   switch (props.message.role) {
     case "user":
-      return "primary";
-    case "system":
-      return "info";
+      return "chat-bubble-sent";
     case "assistant":
-      // Background handled by .chat-bubble-response (see style block) so it
-      // matches the neutral tone shared with ChatInput/ToolCallMessage
-      // instead of Quasar's flat grey-9/grey-3 palette colors.
-      return undefined;
+      return "chat-bubble-response";
     default:
-      return "warning";
+      return "";
   }
 });
 </script>
@@ -44,5 +45,14 @@ const bubbleColor = computed(() => {
 .chat-bubble-response :deep(.q-message-text--received) {
   color: var(--chat-card-bg);
   border: 1px solid var(--chat-card-border);
+}
+
+.chat-bubble-sent :deep(.q-message-text--sent) {
+  color: rgba(25, 210, 77, 0.14);
+  border: 1px solid rgba(25, 210, 77, 0.4);
+}
+
+.chat-bubble-sent :deep(.q-message-text-content--sent) {
+  color: var(--chat-text);
 }
 </style>

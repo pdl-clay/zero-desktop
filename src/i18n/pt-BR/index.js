@@ -11,6 +11,12 @@ export default {
     connected: "Conectado",
     connecting: "Conectando...",
     disconnected: "Desconectado",
+    openPanel: "Abrir painel",
+    closePanel: "Fechar painel",
+    sessions: "Sessões ({count})",
+    noSessions: "Nenhuma sessão neste workspace",
+    newSession: "Nova sessão",
+    deleteSession: "Excluir sessão",
   },
   chat: {
     placeholder: "Pergunte ao zero...",

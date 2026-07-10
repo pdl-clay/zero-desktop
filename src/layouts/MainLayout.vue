@@ -106,13 +106,11 @@
           :class="['col column session-panel', { 'session-panel--closed': !sessionPanelOpen }]"
           style="min-width: 0"
         >
-          <div class="row items-center q-px-sm q-py-xs">
-            <span class="text-caption text-grey-7 text-weight-medium">
+          <div class="row items-center q-px-sm q-py-xs panel-header">
+            <span class="text-caption text-weight-medium panel-header__title">
               {{ workspacesStore.active?.name || "Zero" }}
             </span>
           </div>
-
-          <q-separator />
 
           <div class="q-pa-sm col column" style="min-height: 0">
             <!-- Zero status -->
@@ -125,13 +123,13 @@
             </q-banner>
 
             <template v-if="workspacesStore.hasActive">
-              <div class="text-caption text-grey-6 q-mb-sm">
-                Sessões ({{ zeroStore.sessions.length }})
+              <div class="text-caption panel-section-label q-mb-sm">
+                {{ $t("workspace.sessions", { count: zeroStore.sessions.length }) }}
               </div>
 
               <q-scroll-area class="col">
                 <!-- Session list -->
-                <q-list dense>
+                <q-list dense class="q-gutter-y-xs">
                   <div
                     v-for="session in zeroStore.sessions"
                     :key="session.session_id"
@@ -140,9 +138,10 @@
                     <q-item
                       clickable
                       v-ripple
-                      :active="session.session_id === zeroStore.currentSessionId"
-                      active-class="bg-primary-1 text-primary"
-                      class="rounded-borders q-px-sm"
+                      :class="[
+                        'session-item q-px-sm',
+                        { 'session-item--active': session.session_id === zeroStore.currentSessionId },
+                      ]"
                       @click="onSelectSession(session)"
                     >
                       <q-item-section side>
@@ -171,30 +170,30 @@
                       color="negative"
                       @click.stop="onDeleteSession(session)"
                     >
-                      <q-tooltip>Excluir sessão</q-tooltip>
+                      <q-tooltip>{{ $t("workspace.deleteSession") }}</q-tooltip>
                     </q-btn>
                   </div>
 
                   <div
                     v-if="zeroStore.sessions.length === 0"
-                    class="text-center text-grey-5 q-pa-md"
+                    class="text-center panel-empty q-pa-md"
                   >
                     <q-icon name="chat" size="28px" />
-                    <div class="text-caption q-mt-xs">Nenhuma sessão neste workspace</div>
+                    <div class="text-caption q-mt-xs">{{ $t("workspace.noSessions") }}</div>
                   </div>
 
                   <q-item
                     v-if="zeroStore.sessions.length > 0"
                     clickable
                     v-ripple
-                    class="rounded-borders q-px-sm text-grey-6"
+                    class="session-item session-item--new q-px-sm"
                     @click="onNewSession"
                   >
                     <q-item-section side>
                       <q-icon name="add_comment" size="16px" color="grey-5" />
                     </q-item-section>
                     <q-item-section>
-                      <q-item-label class="text-body2">Nova sessão</q-item-label>
+                      <q-item-label class="text-body2">{{ $t("workspace.newSession") }}</q-item-label>
                     </q-item-section>
                   </q-item>
                 </q-list>
@@ -220,8 +219,6 @@
         unelevated
         size="sm"
         :icon="sessionPanelOpen ? 'chevron_left' : 'chevron_right'"
-        :color="$q.dark.isActive ? 'grey-7' : 'grey-5'"
-        :text-color="$q.dark.isActive ? 'grey-2' : 'white'"
         class="session-toggle-btn"
         :style="{
           top: sessionPanelOpen ? '3%' : '50%',
@@ -229,7 +226,7 @@
         }"
         @click="sessionPanelOpen = !sessionPanelOpen"
       >
-        <q-tooltip>{{ sessionPanelOpen ? "Fechar painel" : "Abrir painel" }}</q-tooltip>
+        <q-tooltip>{{ sessionPanelOpen ? $t("workspace.closePanel") : $t("workspace.openPanel") }}</q-tooltip>
       </q-btn>
     </q-drawer>
 
@@ -725,19 +722,67 @@ function onDocumentMouseUp() {
   padding: 0 !important;
 }
 
+.panel-header {
+  border-bottom: 1px solid var(--chat-card-border);
+}
+
+.panel-header__title {
+  color: var(--chat-text);
+}
+
+.panel-section-label {
+  color: var(--chat-text-muted);
+}
+
+.panel-empty {
+  color: var(--chat-text-muted);
+}
+
+.session-item {
+  border-radius: 10px;
+  border: 1px solid transparent;
+  color: var(--chat-text);
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.session-item:hover {
+  background: var(--chat-card-bg);
+  border-color: var(--chat-card-border);
+}
+
+.session-item--active {
+  background: rgba(25, 210, 77, 0.12);
+  border-color: rgba(25, 210, 77, 0.4);
+}
+
+.session-item--new {
+  color: var(--chat-text-muted);
+}
+
 .session-toggle-btn {
   position: absolute;
   right: 0;
   z-index: 100;
   width: 26px;
   height: 26px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+  background: var(--chat-card-bg);
+  border: 1px solid var(--chat-card-border);
+  color: var(--chat-text-muted);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
   transition:
     top 0.15s ease,
-    transform 0.15s ease;
+    transform 0.15s ease,
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
 }
 
 .session-toggle-btn:hover {
+  background: rgba(25, 210, 77, 0.14);
+  border-color: rgba(25, 210, 77, 0.4);
+  color: #19d24d;
   transform: translateX(50%) translatey(-10%) scale(1.15) !important;
 }
 </style>
