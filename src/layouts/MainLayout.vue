@@ -186,7 +186,7 @@
                     v-if="zeroStore.sessions.length > 0"
                     clickable
                     v-ripple
-                    class="session-item session-item--new q-px-sm"
+                    class="session-item session-item--new q-px-sm session-item-wrapper"
                     @click="onNewSession"
                   >
                     <q-item-section side>
@@ -235,7 +235,7 @@
       <q-page v-if="!workspacesStore.hasActive" class="flex flex-center">
         <div class="text-center text-grey-5">
           <img
-            src="/zero-completa.png"
+            :src="$q.dark.isActive ? '/zero-completa.png' : '/zero-completa-white.png'"
             alt="Zero"
             style="width: auto; height: auto; margin-bottom: 8px"
           />
@@ -689,6 +689,7 @@ function onDocumentMouseUp() {
 
 .session-item-wrapper {
   position: relative;
+  max-width: 78%;
 }
 
 .session-remove-btn {

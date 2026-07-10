@@ -119,14 +119,48 @@ const inputSummary = computed(() => {
     .join("\n");
 });
 
-const truncatedResult = computed(() => {
+function cleanHookOutput(value) {
+  if (typeof value !== "string") return value;
+  // Zero appends a "Hook output:" trailer to many tool results; strip it.
+  const idx = value.indexOf("\n\nHook output:");
+  return idx >= 0 ? value.slice(0, idx).trimEnd() : value;
+}
+
+const formattedResult = computed(() => {
   const result = props.message.result || "";
+  const toolName = props.message.toolName || "";
+
+  // File-editing tools emit a human-readable string such as:
+  // "Successfully edited src/stores/zero-store.js (replaced 1 occurrence).\n\nHook output:\n{}"
+  // Extract the useful part and discard the Hook output trailer.
+  if (toolName === "edit_file" || toolName === "apply_patch" || toolName === "write_file") {
+    const cleaned = cleanHookOutput(result);
+    if (typeof cleaned === "string" && cleaned.includes("Successfully ")) {
+      return cleaned;
+    }
+  }
+
   if (typeof result !== "string") return JSON.stringify(result, null, 2);
-  const lines = result.split("\n");
+
+  // Pretty-print plain JSON results (common for MCP tools), otherwise return
+  // the cleaned string.
+  const trimmed = result.trim();
+  if ((trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
+    try {
+      return JSON.stringify(JSON.parse(trimmed), null, 2);
+    } catch {
+      // Not valid JSON; fall through.
+    }
+  }
+  return cleanHookOutput(result);
+});
+
+const truncatedResult = computed(() => {
+  const lines = formattedResult.value.split("\n");
   if (lines.length > MAX_RESULT_LINES) {
     return lines.slice(0, MAX_RESULT_LINES).join("\n") + "\n...";
   }
-  return result;
+  return formattedResult.value;
 });
 
 function onCopy() {

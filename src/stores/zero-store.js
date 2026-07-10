@@ -15,6 +15,7 @@ import {
 } from "@/services/zero";
 
 const MAX_STDERR_LINES = 20;
+const SESSION_SYNC_INTERVAL_MS = 3000;
 
 let _idCounter = 0;
 function nextId() {
@@ -39,6 +40,8 @@ export const useZeroStore = defineStore("zero", {
     unlistenProcessExited: null,
     runInProgress: false,
     lastStderrLines: [],
+    _sessionSyncTimer: null,
+    _lastEventCount: 0,
   }),
 
   getters: {
@@ -89,11 +92,13 @@ export const useZeroStore = defineStore("zero", {
       this.zeroError = null;
       this.runInProgress = false;
       this.lastStderrLines = [];
+      this._lastEventCount = 0;
 
       try {
         await this.setupListeners();
         await startZeroSession(cwd, sessionId);
         this.isConnected = true;
+        this._startSessionSync();
       } catch (error) {
         this.zeroError = error;
         this.isConnected = false;
@@ -130,6 +135,7 @@ export const useZeroStore = defineStore("zero", {
         this.currentThinking = "";
         this.runInProgress = false;
         this.removeListeners();
+        this._stopSessionSync();
       }
     },
 
@@ -147,12 +153,47 @@ export const useZeroStore = defineStore("zero", {
       this.messages = [];
       this.currentResponse = "";
       this.currentThinking = "";
+      this._lastEventCount = 0;
 
       try {
         const events = await loadSessionHistory(sessionId);
+        this._lastEventCount = events.length;
         this.buildMessagesFromHistory(events);
       } catch {
         this.messages = [];
+      }
+
+      this._startSessionSync();
+    },
+
+    _startSessionSync() {
+      this._stopSessionSync();
+      if (!this.currentSessionId) return;
+
+      this._sessionSyncTimer = setInterval(() => {
+        this._syncSessionHistory();
+      }, SESSION_SYNC_INTERVAL_MS);
+    },
+
+    _stopSessionSync() {
+      if (this._sessionSyncTimer) {
+        clearInterval(this._sessionSyncTimer);
+        this._sessionSyncTimer = null;
+      }
+    },
+
+    async _syncSessionHistory() {
+      if (!this.currentSessionId || this.runInProgress || this.isConnecting) return;
+
+      try {
+        const events = await loadSessionHistory(this.currentSessionId);
+        if (events.length === this._lastEventCount) return;
+
+        this._lastEventCount = events.length;
+        this.buildMessagesFromHistory(events);
+      } catch {
+        // Ignore sync errors to avoid spamming the user while a session is
+        // temporarily unavailable.
       }
     },
 
@@ -165,6 +206,14 @@ export const useZeroStore = defineStore("zero", {
     // does instead of only showing plain text messages.
     buildMessagesFromHistory(events) {
       this.messages = [];
+      // Load permission decisions saved from a previous live session so that
+      // recovered permission cards show the correct approved/denied status
+      // instead of all appearing as "pending" with fresh Approve/Deny buttons.
+      const savedDecisions =
+        this.currentSessionId
+          ? this._loadPermissionDecisions(this.currentSessionId)
+          : {};
+
       for (const event of events) {
         const payload = event.payload || {};
         switch (event.type) {
@@ -210,13 +259,39 @@ export const useZeroStore = defineStore("zero", {
             });
             break;
 
-          case "permission_request":
+          case "permission_request": {
             this.addPermissionRequest(payload);
+            // Restore any decision the user made during the live session.
+            const permId = payload.toolCallId || payload.permissionId;
+            if (permId && savedDecisions[permId]) {
+              const msg = this.messages[this.messages.length - 1];
+              if (msg && msg.type === "permission_request") {
+                msg.status = savedDecisions[permId];
+              }
+            }
             break;
+          }
 
-          case "permission_decision":
-            this.addPermissionDecision(payload);
+          case "permission_decision": {
+            // When a permission_decision event exists in history, try to
+            // update the matching permission_request card instead of creating
+            // a separate badge so the card reflects the final state.
+            const permId = payload.permissionId;
+            const action = payload.action;
+            const req = permId
+              ? this.messages.find(
+                  (m) =>
+                    m.type === "permission_request" &&
+                    m.permissionId === permId,
+                )
+              : null;
+            if (req) {
+              req.status = action === "deny" ? "denied" : "approved";
+            } else {
+              this.addPermissionDecision(payload);
+            }
             break;
+          }
 
           case "error":
             this.messages.push({
@@ -233,19 +308,59 @@ export const useZeroStore = defineStore("zero", {
       }
     },
 
+    // ---- localStorage helpers for permission decisions --------------------
+    // Because send_permission_decision cannot deliver decisions mid-run
+    // (zero reads stdin to EOF before acting), decisions are persisted
+    // client-side so that recovered sessions show the correct
+    // approved/denied state instead of resetting every card to "pending".
+
+    _permStorageKey(sessionId) {
+      return `zero-desktop-permissions-${sessionId}`;
+    },
+
+    _loadPermissionDecisions(sessionId) {
+      try {
+        const raw = localStorage.getItem(this._permStorageKey(sessionId));
+        return raw ? JSON.parse(raw) : {};
+      } catch {
+        return {};
+      }
+    },
+
+    _savePermissionDecision(sessionId, permissionId, decision) {
+      const decisions = this._loadPermissionDecisions(sessionId);
+      decisions[permissionId] = decision;
+      try {
+        localStorage.setItem(
+          this._permStorageKey(sessionId),
+          JSON.stringify(decisions),
+        );
+      } catch {
+        // localStorage full or unavailable — non-critical.
+      }
+    },
+
+    _clearPermissionDecisions(sessionId) {
+      try {
+        localStorage.removeItem(this._permStorageKey(sessionId));
+      } catch {
+        // ignore
+      }
+    },
+
     async removeSession(sessionId) {
       try {
-        console.log("[zero-store] deleteSession:", sessionId);
         await deleteSession(sessionId);
+        this._clearPermissionDecisions(sessionId);
         if (this.currentSessionId === sessionId) {
           this.currentSessionId = null;
           this.messages = [];
+          this._stopSessionSync();
         }
         if (this.currentWorkspace) {
           await this.loadSessions(this.currentWorkspace);
         }
       } catch (err) {
-        console.error("[zero-store] deleteSession failed:", err);
         this.zeroError = String(err);
       }
     },
@@ -475,6 +590,13 @@ export const useZeroStore = defineStore("zero", {
       );
       if (!msg) return;
       msg.status = "approved";
+      if (this.currentSessionId) {
+        this._savePermissionDecision(
+          this.currentSessionId,
+          permissionId,
+          "approved",
+        );
+      }
       try {
         await sendPermissionDecision(permissionId, "approved");
       } catch (error) {
@@ -491,6 +613,13 @@ export const useZeroStore = defineStore("zero", {
       );
       if (!msg) return;
       msg.status = "denied";
+      if (this.currentSessionId) {
+        this._savePermissionDecision(
+          this.currentSessionId,
+          permissionId,
+          "denied",
+        );
+      }
       try {
         await sendPermissionDecision(permissionId, "denied");
       } catch (error) {

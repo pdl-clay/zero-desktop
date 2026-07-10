@@ -13,6 +13,7 @@
       class="col chat-messages-scroll q-pa-md"
       ref="messagesContainer"
       style="padding-bottom: 84px"
+      @scroll="onScroll"
     >
       <div
         v-if="
@@ -24,7 +25,7 @@
       >
         <div>
           <img
-            src="/zero-completa.png"
+            :src="$q.dark.isActive ? '/zero-completa.png' : '/zero-completa-white.png'"
             alt="Zero"
             style="width: auto; height: auto; margin-bottom: 8px"
           />
@@ -37,7 +38,10 @@
         <TextMessage v-if="message.type === 'text'" :message="message" />
         <ThinkingBlock v-else-if="message.type === 'thinking'" :message="message" />
         <ToolCallMessage v-else-if="message.type === 'tool_call'" :message="message" />
-        <PermissionRequest v-else-if="message.type === 'permission_request'" :message="message" />
+        <PermissionDecisionBadge
+          v-else-if="message.type === 'permission_request'"
+          :message="permissionDecisionBadgeFrom(message)"
+        />
         <PermissionDecisionBadge
           v-else-if="message.type === 'permission_decision'"
           :message="message"
@@ -60,6 +64,7 @@
     </div>
 
     <div :class="['chat-input-bar q-pa-sm', $q.dark.isActive ? 'chat-input-bar--dark' : '']">
+      <PendingPermissionPanel v-if="pendingPermission" :request="pendingPermission" />
       <ChatInput
         v-model="input"
         :placeholder="$t('chat.placeholder')"
@@ -80,11 +85,20 @@ import { renderMarkdown } from "@/utils/markdown";
 import TextMessage from "@/components/chat/TextMessage.vue";
 import ThinkingBlock from "@/components/chat/ThinkingBlock.vue";
 import ToolCallMessage from "@/components/chat/ToolCallMessage.vue";
-import PermissionRequest from "@/components/chat/PermissionRequest.vue";
 import PermissionDecisionBadge from "@/components/chat/PermissionDecisionBadge.vue";
+import PendingPermissionPanel from "@/components/chat/PendingPermissionPanel.vue";
 import ErrorMessage from "@/components/chat/ErrorMessage.vue";
 import WorkingIndicator from "@/components/chat/WorkingIndicator.vue";
 import ChatInput from "@/components/chat/ChatInput.vue";
+
+function permissionDecisionBadgeFrom(request) {
+  return {
+    toolName: request.toolName,
+    action: request.status === "denied" ? "deny" : "allow",
+    reason: request.reason,
+    riskLevel: request.riskLevel,
+  };
+}
 
 const props = defineProps({
   workspacePath: {
@@ -97,8 +111,15 @@ const $q = useQuasar();
 const zeroStore = useZeroStore();
 const input = ref("");
 const messagesContainer = ref(null);
+const isUserAtBottom = ref(true);
 
-const canSend = computed(() => zeroStore.isConnected && !zeroStore.runInProgress);
+const pendingPermission = computed(() =>
+  zeroStore.messages.find(
+    (m) => m.type === "permission_request" && m.status === "pending",
+  ),
+);
+
+const canSend = computed(() => zeroStore.isConnected && !zeroStore.runInProgress && !pendingPermission.value);
 
 // Quasar's QPage defaults to `min-height`, which lets content grow past the
 // viewport and makes the whole window scroll instead of just the message
@@ -110,6 +131,24 @@ function pageStyleFn(offset, height) {
   return { height: `${height - offset}px` };
 }
 
+function scrollToBottomIfNeeded() {
+  nextTick(() => {
+    if (!messagesContainer.value) return;
+    const container = messagesContainer.value;
+    if (isUserAtBottom.value) {
+      container.scrollTop = container.scrollHeight;
+    }
+  });
+}
+
+function onScroll() {
+  if (!messagesContainer.value) return;
+  const container = messagesContainer.value;
+  const threshold = 24;
+  isUserAtBottom.value =
+    container.scrollHeight - container.scrollTop - container.clientHeight <= threshold;
+}
+
 watch(
   [
     () => zeroStore.messages.length,
@@ -117,11 +156,7 @@ watch(
     () => zeroStore.currentThinking,
   ],
   () => {
-    nextTick(() => {
-      if (messagesContainer.value) {
-        messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight;
-      }
-    });
+    scrollToBottomIfNeeded();
   },
 );
 
