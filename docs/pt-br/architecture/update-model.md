@@ -6,10 +6,10 @@ Este documento define como o **zero-desktop** gerencia suas próprias atualizaç
 
 > O ciclo de vida do **zero-desktop** é separado do ciclo de vida do **zero CLI**.
 
-| Componente | Quem atualiza | Mecanismo |
-|---|---|---|
-| `zero-desktop` | zero-desktop | Tauri updater |
-| `zero` CLI | usuário ou script oficial | `zero update --check`, npm, install script |
+| Componente     | Quem atualiza             | Mecanismo                                  |
+| -------------- | ------------------------- | ------------------------------------------ |
+| `zero-desktop` | zero-desktop              | Tauri updater                              |
+| `zero` CLI     | usuário ou script oficial | `zero update --check`, npm, install script |
 
 ## 2. Atualização do zero-desktop
 
@@ -58,11 +58,11 @@ A UI apresenta três opções:
 
 Local padrão do cache isolado:
 
-| Sistema | Caminho |
-|---|---|
-| Linux | `~/.local/share/zero-desktop/bin/zero` |
-| macOS | `~/Library/Application Support/zero-desktop/bin/zero` |
-| Windows | `%LOCALAPPDATA%\zero-desktop\bin\zero.exe` |
+| Sistema | Caminho                                               |
+| ------- | ----------------------------------------------------- |
+| Linux   | `~/.local/share/zero-desktop/bin/zero`                |
+| macOS   | `~/Library/Application Support/zero-desktop/bin/zero` |
+| Windows | `%LOCALAPPDATA%\zero-desktop\bin\zero.exe`            |
 
 O cache isolado é usado apenas quando:
 

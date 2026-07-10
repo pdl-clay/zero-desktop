@@ -20,21 +20,21 @@ O sistema de workspaces oferece:
 
 **Arquivo:** `src/stores/workspaces-store.js`
 
-| Estado | Tipo | Descrição |
-|---|---|---|
-| `workspaces` | `Array<{ path, name, addedAt }>` | Todos os workspaces salvos. |
-| `activePath` | `string \| null` | Caminho do workspace atualmente selecionado. |
+| Estado       | Tipo                             | Descrição                                    |
+| ------------ | -------------------------------- | -------------------------------------------- |
+| `workspaces` | `Array<{ path, name, addedAt }>` | Todos os workspaces salvos.                  |
+| `activePath` | `string \| null`                 | Caminho do workspace atualmente selecionado. |
 
-| Ação | Descrição |
-|---|---|
-| `add(path)` | Normaliza o caminho, extrai o nome do diretório, deduplica, insere no array, salva no `localStorage`. Se nenhum workspace estiver ativo, seleciona automaticamente. |
-| `remove(path)` | Filtra o caminho, salva no `localStorage`. Se o workspace removido estava ativo, seleciona o primeiro restante (ou define `null`). |
-| `select(path)` | Define `activePath`. |
+| Ação           | Descrição                                                                                                                                                           |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `add(path)`    | Normaliza o caminho, extrai o nome do diretório, deduplica, insere no array, salva no `localStorage`. Se nenhum workspace estiver ativo, seleciona automaticamente. |
+| `remove(path)` | Filtra o caminho, salva no `localStorage`. Se o workspace removido estava ativo, seleciona o primeiro restante (ou define `null`).                                  |
+| `select(path)` | Define `activePath`.                                                                                                                                                |
 
-| Getter | Descrição |
-|---|---|
-| `active` | Retorna o objeto completo do workspace para `activePath` ou `null`. |
-| `hasActive` | `true` se um workspace está selecionado. |
+| Getter      | Descrição                                                           |
+| ----------- | ------------------------------------------------------------------- |
+| `active`    | Retorna o objeto completo do workspace para `activePath` ou `null`. |
+| `hasActive` | `true` se um workspace está selecionado.                            |
 
 ### Persistência
 
@@ -51,6 +51,7 @@ Workspaces são armazenados no `localStorage` sob a chave `zero-desktop-workspac
 ```
 
 Chamadas de persistência:
+
 - `loadWorkspaces()` — chamada na criação da store (síncrona, não bloqueia).
 - `saveWorkspaces()` — chamada após cada `add()` e `remove()`.
 
@@ -80,6 +81,7 @@ Chamadas de persistência:
 ### Adicionando um Workspace
 
 Fluxo:
+
 1. Usuário clica no botão `+`.
 2. `onBrowseAndAdd()` chama `open({ directory: true, multiple: false })` do `@tauri-apps/plugin-dialog`.
 3. O seletor de pastas nativo do sistema abre (GTK no Linux, Finder no macOS, Explorer no Windows).
@@ -98,6 +100,7 @@ watch(activePath)
 ```
 
 A ação `startSession`:
+
 1. Limpa as mensagens do workspace anterior.
 2. Chama `setupListeners()` para anexar os listeners `zero:event` e `zero:stderr`.
 3. Chama o comando Tauri `start_zero_session(cwd)` que informa a bridge Rust o diretório do workspace.
@@ -109,12 +112,12 @@ A primeira mensagem enviada após a seleção faz a bridge Rust spawnar `zero ex
 
 ### Comandos Tauri
 
-| Comando | Arquivo | Descrição |
-|---|---|---|
-| `locate_zero_cli` | `lib.rs:59` | Encontra o binário zero e retorna caminho + versão. |
-| `start_zero_session(cwd, session_id?)` | `lib.rs:65` | Informa a bridge o workspace. `session_id` opcional para resume. |
-| `send_zero_message(content)` | `lib.rs:73` | Envia uma mensagem do usuário. Bridge spawna `zero exec` se necessário. |
-| `stop_zero_session` | `lib.rs:78` | Mata o processo zero atual e limpa o estado. |
+| Comando                                | Arquivo     | Descrição                                                               |
+| -------------------------------------- | ----------- | ----------------------------------------------------------------------- |
+| `locate_zero_cli`                      | `lib.rs:59` | Encontra o binário zero e retorna caminho + versão.                     |
+| `start_zero_session(cwd, session_id?)` | `lib.rs:65` | Informa a bridge o workspace. `session_id` opcional para resume.        |
+| `send_zero_message(content)`           | `lib.rs:73` | Envia uma mensagem do usuário. Bridge spawna `zero exec` se necessário. |
+| `stop_zero_session`                    | `lib.rs:78` | Mata o processo zero atual e limpa o estado.                            |
 
 ### Estado da Bridge (`bridge.rs`)
 

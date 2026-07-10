@@ -74,10 +74,10 @@ rm -rf ~/.local/share/zero-desktop
 
 ## Supported architectures
 
-| Architecture | Package name |
-|---|---|
-| x86_64 | `zero-desktop-vX.Y.Z-linux-x86_64.AppImage` |
-| aarch64 | `zero-desktop-vX.Y.Z-linux-aarch64.AppImage` |
+| Architecture | Package name                                 |
+| ------------ | -------------------------------------------- |
+| x86_64       | `zero-desktop-vX.Y.Z-linux-x86_64.AppImage`  |
+| aarch64      | `zero-desktop-vX.Y.Z-linux-aarch64.AppImage` |
 
 ## Notes
 

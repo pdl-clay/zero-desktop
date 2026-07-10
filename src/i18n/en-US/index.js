@@ -1,7 +1,48 @@
-// This is just an example,
-// so you can safely delete all default props below
-
 export default {
-  failed: 'Action failed',
-  success: 'Action was successful'
-}
+  app: {
+    title: "Zero Desktop",
+    subtitle: "Autonomous coding assistant",
+  },
+  workspace: {
+    drawer: "Workspaces",
+    add: "Add workspace",
+    noWorkspaces: "No workspaces. Add a project directory.",
+    select: "Select workspace",
+    connected: "Connected",
+    connecting: "Connecting...",
+    disconnected: "Disconnected",
+  },
+  chat: {
+    placeholder: "Ask zero...",
+    send: "Send",
+    empty: "Select a workspace and connect to begin.",
+    emptyTitle: "Send a message to start",
+    emptySubtitle: "a new session",
+    zeroNotFound: "zero CLI not found. Install it first.",
+    zeroFound: "zero CLI: {path} ({version})",
+    error: "Error",
+    thinking: "Thinking",
+    thinkingRunning: "Thinking...",
+    toolRunning: "running...",
+    toolCompleted: "completed",
+    toolFailed: "failed",
+    writing: "Writing response...",
+    showMore: "Show more",
+    showLess: "Show less",
+    copy: "Copy",
+    permissionRequired: "Permission required",
+    permissionApproved: "Permission granted",
+    permissionDenied: "Permission denied",
+    decisionAllowed: "allowed",
+    decisionDenied: "denied",
+    approve: "Approve",
+    deny: "Deny",
+    sending: "Sending...",
+    connectionLost: "Lost connection to zero — the process ended unexpectedly.",
+  },
+  common: {
+    cancel: "Cancel",
+    ok: "OK",
+    close: "Close",
+  },
+};

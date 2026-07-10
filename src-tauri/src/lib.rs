@@ -25,15 +25,34 @@ pub struct SessionInfo {
     pub provider: String,
 }
 
+/// A raw persisted session event, as stored in `events.jsonl`. Kept
+/// deliberately generic (payload is untyped JSON) because the persisted
+/// envelope uses different field names per event type (e.g. `arguments` as a
+/// JSON string vs. the live stream's `args` object, `toolCallId` vs. `id`) -
+/// the frontend normalizes these the same way it normalizes live stream
+/// events, so both paths stay in one place instead of duplicating parsing
+/// logic on the Rust side too.
 #[derive(Debug, Clone, serde::Serialize)]
-pub struct ChatMessage {
-    pub role: String,
-    pub content: String,
-    pub timestamp: String,
+pub struct SessionEvent {
+    #[serde(rename = "type")]
+    pub event_type: String,
+    pub payload: serde_json::Value,
+    #[serde(rename = "createdAt")]
+    pub created_at: String,
 }
 
+const RELEVANT_HISTORY_EVENT_TYPES: &[&str] = &[
+    "message",
+    "reasoning",
+    "tool_call",
+    "tool_result",
+    "permission_request",
+    "permission_decision",
+    "error",
+];
+
 #[tauri::command]
-fn load_session_history(session_id: String) -> Result<Vec<ChatMessage>, String> {
+fn load_session_history(session_id: String) -> Result<Vec<SessionEvent>, String> {
     let data_dir = dirs::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("zero")
@@ -45,24 +64,24 @@ fn load_session_history(session_id: String) -> Result<Vec<ChatMessage>, String> 
         .map_err(|e| format!("Failed to open session events: {e}"))?;
 
     let reader = std::io::BufReader::new(file);
-    let mut messages = Vec::new();
+    let mut events = Vec::new();
 
     for line in reader.lines() {
         let line = line.map_err(|e| format!("Failed to read line: {e}"))?;
-        if let Ok(event) = serde_json::from_str::<serde_json::Value>(&line) {
-            let event_type = event["type"].as_str().unwrap_or("");
-            if event_type == "message" {
-                let role = event["payload"]["role"].as_str().unwrap_or("unknown").to_string();
-                let content = event["payload"]["content"].as_str().unwrap_or("").to_string();
-                let timestamp = event["createdAt"].as_str().unwrap_or("").to_string();
-                if !content.is_empty() {
-                    messages.push(ChatMessage { role, content, timestamp });
-                }
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) {
+            let event_type = value["type"].as_str().unwrap_or("").to_string();
+            if !RELEVANT_HISTORY_EVENT_TYPES.contains(&event_type.as_str()) {
+                continue;
             }
+            events.push(SessionEvent {
+                event_type,
+                payload: value["payload"].clone(),
+                created_at: value["createdAt"].as_str().unwrap_or("").to_string(),
+            });
         }
     }
 
-    Ok(messages)
+    Ok(events)
 }
 
 #[tauri::command]
@@ -140,6 +159,17 @@ async fn stop_zero_session(state: tauri::State<'_, Arc<ZeroBridge>>) -> Result<(
     state.stop().await
 }
 
+#[tauri::command]
+async fn send_permission_decision(
+    state: tauri::State<'_, Arc<ZeroBridge>>,
+    permission_id: String,
+    decision: String,
+) -> Result<(), String> {
+    state
+        .send_permission_decision(permission_id, decision)
+        .await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -162,6 +192,7 @@ pub fn run() {
             locate_zero_cli,
             start_zero_session,
             send_zero_message,
+            send_permission_decision,
             stop_zero_session,
             list_zero_sessions,
             load_session_history,

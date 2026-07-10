@@ -134,12 +134,12 @@ Isso faz o zero carregar o contexto da sessão existente, então o modelo se lem
 
 ### `zero-store.js` — Estado das Sessões
 
-| Estado | Tipo | Descrição |
-|---|---|---|
-| `currentSessionId` | `string \| null` | ID da sessão atualmente visualizada. |
-| `sessions` | `Array` | Lista de sessões do workspace ativo. |
-| `messages` | `Array<{role, content, timestamp}>` | Mensagens do chat exibidas no `ChatView`. |
-| `currentWorkspace` | `string` | Caminho do workspace ativo. |
+| Estado             | Tipo                                | Descrição                                 |
+| ------------------ | ----------------------------------- | ----------------------------------------- |
+| `currentSessionId` | `string \| null`                    | ID da sessão atualmente visualizada.      |
+| `sessions`         | `Array`                             | Lista de sessões do workspace ativo.      |
+| `messages`         | `Array<{role, content, timestamp}>` | Mensagens do chat exibidas no `ChatView`. |
+| `currentWorkspace` | `string`                            | Caminho do workspace ativo.               |
 
 ### Ações
 
@@ -211,12 +211,12 @@ Usuário clica no item da sessão
 
 Mensagens carregadas do histórico usam o mesmo componente `q-chat-message` das mensagens ao vivo:
 
-| Papel | Nome | Fundo |
-|---|---|---|
-| `user` | "Você" | `primary` (azul) |
-| `assistant` | "Zero" | `grey-3` (claro) ou `grey-9` (modo escuro) |
-| `system` | "system" | `info` |
-| `event` | "event" | `warning` |
+| Papel       | Nome     | Fundo                                      |
+| ----------- | -------- | ------------------------------------------ |
+| `user`      | "Você"   | `primary` (azul)                           |
+| `assistant` | "Zero"   | `grey-3` (claro) ou `grey-9` (modo escuro) |
+| `system`    | "system" | `info`                                     |
+| `event`     | "event"  | `warning`                                  |
 
 O modo escuro adapta as cores das bolhas automaticamente via `$q.dark.isActive`.
 
@@ -224,13 +224,13 @@ O modo escuro adapta as cores das bolhas automaticamente via `$q.dark.isActive`.
 
 Testes de integração verificam o sistema de sessões ponta a ponta:
 
-| Teste | Arquivo | Verifica |
-|---|---|---|
-| `test_sessions_list_filters_by_cwd` | `tests/zero_integration.rs` | Cria uma sessão em dir temporário, roda `zero sessions list --json`, valida que a sessão aparece filtrada por cwd. |
-| `test_session_info_fields` | `tests/zero_integration.rs` | Valida que os campos `sessionId`, `createdAt`, `modelId` e `cwd` estão presentes e corretos. |
-| `test_delete_session_removes_from_list` | `tests/zero_integration.rs` | Cria uma sessão, verifica que existe em disco e na lista, remove via `remove_dir_all`, verifica que não aparece mais na lista. |
+| Teste                                             | Arquivo                     | Verifica                                                                                                                                                                                                                                |
+| ------------------------------------------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `test_sessions_list_filters_by_cwd`               | `tests/zero_integration.rs` | Cria uma sessão em dir temporário, roda `zero sessions list --json`, valida que a sessão aparece filtrada por cwd.                                                                                                                      |
+| `test_session_info_fields`                        | `tests/zero_integration.rs` | Valida que os campos `sessionId`, `createdAt`, `modelId` e `cwd` estão presentes e corretos.                                                                                                                                            |
+| `test_delete_session_removes_from_list`           | `tests/zero_integration.rs` | Cria uma sessão, verifica que existe em disco e na lista, remove via `remove_dir_all`, verifica que não aparece mais na lista.                                                                                                          |
 | `test_message_history_recovery_from_events_jsonl` | `tests/zero_integration.rs` | Cria uma sessão com uma mensagem conhecida, lê `events.jsonl` do disco, valida que as mensagens de user + assistant estão presentes com os papéis corretos e verifica campos obrigatórios (`id`, `sessionId`, `createdAt`, `sequence`). |
-| `test_multi_turn_context_preserved_with_resume` | `tests/zero_integration.rs` | Turno 1 define contexto ("nome é Alice"), turno 2 retoma via `--resume <id>` e pergunta "Qual é o meu nome?" — valida que "Alice" aparece. |
+| `test_multi_turn_context_preserved_with_resume`   | `tests/zero_integration.rs` | Turno 1 define contexto ("nome é Alice"), turno 2 retoma via `--resume <id>` e pergunta "Qual é o meu nome?" — valida que "Alice" aparece.                                                                                              |
 
 ## Referências
 

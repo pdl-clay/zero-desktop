@@ -1,12 +1,12 @@
-import { invoke } from '@tauri-apps/api/core'
-import { listen } from '@tauri-apps/api/event'
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 /**
  * Locate the zero CLI binary on the system.
  * @returns {Promise<{ path: string, version: string | null }>}
  */
 export async function locateZeroCli() {
-  return invoke('locate_zero_cli')
+  return invoke("locate_zero_cli");
 }
 
 /**
@@ -15,7 +15,7 @@ export async function locateZeroCli() {
  * @param {string|null} sessionId - optional session to resume
  */
 export async function startZeroSession(cwd, sessionId = null) {
-  return invoke('start_zero_session', { cwd, sessionId })
+  return invoke("start_zero_session", { cwd, sessionId });
 }
 
 /**
@@ -23,14 +23,14 @@ export async function startZeroSession(cwd, sessionId = null) {
  * @param {string} content
  */
 export async function sendZeroMessage(content) {
-  return invoke('send_zero_message', { content })
+  return invoke("send_zero_message", { content });
 }
 
 /**
  * Stop the active zero session.
  */
 export async function stopZeroSession() {
-  return invoke('stop_zero_session')
+  return invoke("stop_zero_session");
 }
 
 /**
@@ -39,7 +39,7 @@ export async function stopZeroSession() {
  * @returns {Promise<() => void>}
  */
 export async function onZeroEvent(callback) {
-  return listen('zero:event', callback)
+  return listen("zero:event", callback);
 }
 
 /**
@@ -48,7 +48,16 @@ export async function onZeroEvent(callback) {
  * @returns {Promise<() => void>}
  */
 export async function onZeroStderr(callback) {
-  return listen('zero:stderr', callback)
+  return listen("zero:stderr", callback);
+}
+
+/**
+ * Listen for the zero process exiting (stdout stream closed).
+ * @param {(event: { payload: null }) => void} callback
+ * @returns {Promise<() => void>}
+ */
+export async function onZeroProcessExited(callback) {
+  return listen("zero:process-exited", callback);
 }
 
 /**
@@ -57,7 +66,7 @@ export async function onZeroStderr(callback) {
  * @returns {Promise<Array<{ session_id: string, title: string, created_at: string, cwd: string, model_id: string }>>}
  */
 export async function listZeroSessions(cwd) {
-  return invoke('list_zero_sessions', { cwd })
+  return invoke("list_zero_sessions", { cwd });
 }
 
 /**
@@ -66,7 +75,7 @@ export async function listZeroSessions(cwd) {
  * @returns {Promise<Array<{ role: string, content: string, timestamp: string }>>}
  */
 export async function loadSessionHistory(sessionId) {
-  return invoke('load_session_history', { sessionId })
+  return invoke("load_session_history", { sessionId });
 }
 
 /**
@@ -74,5 +83,14 @@ export async function loadSessionHistory(sessionId) {
  * @param {string} sessionId
  */
 export async function deleteSession(sessionId) {
-  return invoke('delete_session', { sessionId })
+  return invoke("delete_session", { sessionId });
+}
+
+/**
+ * Send a permission decision back to zero.
+ * @param {string} permissionId
+ * @param {string} decision - "approved" or "denied"
+ */
+export async function sendPermissionDecision(permissionId, decision) {
+  return invoke("send_permission_decision", { permissionId, decision });
 }

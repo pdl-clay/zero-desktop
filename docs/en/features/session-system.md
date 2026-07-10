@@ -132,12 +132,12 @@ This causes zero to load the existing session context, so the model remembers th
 
 ### `zero-store.js` — Session State
 
-| State | Type | Description |
-|---|---|---|
-| `currentSessionId` | `string \| null` | ID of the currently viewed session. |
-| `sessions` | `Array` | Session list for the active workspace. |
-| `messages` | `Array<{role, content, timestamp}>` | Chat messages displayed in `ChatView`. |
-| `currentWorkspace` | `string` | Active workspace path. |
+| State              | Type                                | Description                            |
+| ------------------ | ----------------------------------- | -------------------------------------- |
+| `currentSessionId` | `string \| null`                    | ID of the currently viewed session.    |
+| `sessions`         | `Array`                             | Session list for the active workspace. |
+| `messages`         | `Array<{role, content, timestamp}>` | Chat messages displayed in `ChatView`. |
+| `currentWorkspace` | `string`                            | Active workspace path.                 |
 
 ### Actions
 
@@ -209,12 +209,12 @@ User clicks session item
 
 Messages loaded from history use the same `q-chat-message` component as live messages:
 
-| Role | Name | Background |
-|---|---|---|
-| `user` | "Você" | `primary` (blue) |
-| `assistant` | "Zero" | `grey-3` (light) or `grey-9` (dark mode) |
-| `system` | "system" | `info` |
-| `event` | "event" | `warning` |
+| Role        | Name     | Background                               |
+| ----------- | -------- | ---------------------------------------- |
+| `user`      | "Você"   | `primary` (blue)                         |
+| `assistant` | "Zero"   | `grey-3` (light) or `grey-9` (dark mode) |
+| `system`    | "system" | `info`                                   |
+| `event`     | "event"  | `warning`                                |
 
 Dark mode adapts chat bubble colors automatically via `$q.dark.isActive`.
 
@@ -222,13 +222,13 @@ Dark mode adapts chat bubble colors automatically via `$q.dark.isActive`.
 
 Integration tests verify the session system end-to-end:
 
-| Test | File | Verifies |
-|---|---|---|
-| `test_sessions_list_filters_by_cwd` | `tests/zero_integration.rs` | Creates a session in a temp dir, runs `zero sessions list --json`, asserts the session appears filtered by cwd. |
-| `test_session_info_fields` | `tests/zero_integration.rs` | Asserts `sessionId`, `createdAt`, `modelId`, and `cwd` fields are present and correct. |
-| `test_delete_session_removes_from_list` | `tests/zero_integration.rs` | Creates a session, verifies it exists on disk and in the session list, deletes it via `remove_dir_all`, verifies it no longer appears in the list. |
+| Test                                              | File                        | Verifies                                                                                                                                                                                                            |
+| ------------------------------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `test_sessions_list_filters_by_cwd`               | `tests/zero_integration.rs` | Creates a session in a temp dir, runs `zero sessions list --json`, asserts the session appears filtered by cwd.                                                                                                     |
+| `test_session_info_fields`                        | `tests/zero_integration.rs` | Asserts `sessionId`, `createdAt`, `modelId`, and `cwd` fields are present and correct.                                                                                                                              |
+| `test_delete_session_removes_from_list`           | `tests/zero_integration.rs` | Creates a session, verifies it exists on disk and in the session list, deletes it via `remove_dir_all`, verifies it no longer appears in the list.                                                                  |
 | `test_message_history_recovery_from_events_jsonl` | `tests/zero_integration.rs` | Creates a session with a known message, reads `events.jsonl` from disk, verifies user + assistant messages are present with correct roles, and checks required fields (`id`, `sessionId`, `createdAt`, `sequence`). |
-| `test_multi_turn_context_preserved_with_resume` | `tests/zero_integration.rs` | Turn 1 sets context ("name is Alice"), turn 2 resumes via `--resume <id>` and asks "What is my name?" — asserts "Alice" appears. |
+| `test_multi_turn_context_preserved_with_resume`   | `tests/zero_integration.rs` | Turn 1 sets context ("name is Alice"), turn 2 resumes via `--resume <id>` and asks "What is my name?" — asserts "Alice" appears.                                                                                    |
 
 ## References
 

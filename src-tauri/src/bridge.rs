@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tauri::Emitter;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, Mutex};
 
 use crate::locator::locate_zero;
 
@@ -17,6 +17,13 @@ pub enum InputEvent {
         schema_version: i32,
         role: String,
         content: String,
+    },
+    PermissionDecision {
+        #[serde(rename = "schemaVersion")]
+        schema_version: i32,
+        #[serde(rename = "permissionId")]
+        permission_id: String,
+        decision: String,
     },
 }
 
@@ -47,13 +54,23 @@ struct SessionState {
     cwd: PathBuf,
     session_id: Arc<Mutex<Option<String>>>,
     child: Option<Child>,
+    /// Sender for forwarding permission decisions to the stdin writer task.
+    /// Dropping this closes the channel, which causes the writer to finish
+    /// and drop stdin, signalling end-of-input to zero.
+    permission_tx: Option<mpsc::Sender<InputEvent>>,
 }
 
 /// Bridge that manages the zero CLI child process and forwards events.
 ///
-/// Each call to `send()` spawns a fresh `zero exec` process. The first turn
-/// spawns a plain `zero exec`; subsequent turns use `--resume <sessionId>` so
-/// that zero picks up the persisted session and retains conversation context.
+/// Each call to `send()` spawns a fresh `zero exec` process with a persistent
+/// stdin writer task. This task writes the initial user message and then
+/// listens on an mpsc channel for permission decisions, forwarding them to
+/// zero's stdin. When the channel sender is dropped (on next `send()` or
+/// `stop()`), the writer task finishes and drops stdin.
+///
+/// The first turn spawns a plain `zero exec`; subsequent turns use
+/// `--resume <sessionId>` so that zero picks up the persisted session and
+/// retains conversation context.
 pub struct ZeroBridge {
     app: tauri::AppHandle,
     session: Arc<Mutex<Option<SessionState>>>,
@@ -67,40 +84,42 @@ impl ZeroBridge {
         }
     }
 
-    /// Record the workspace directory for this session.
-    ///
-    /// If `session_id` is provided, the bridge will use `--resume` on the
-    /// first `send()` to continue that session instead of starting a new one.
-    ///
-    /// The first zero process is spawned lazily on the first `send()`.
     pub async fn start(&self, cwd: PathBuf, resume_id: Option<String>) -> Result<(), String> {
         let mut session = self.session.lock().await;
+        if let Some(ref mut old) = *session {
+            old.permission_tx.take();
+            if let Some(mut child) = old.child.take() {
+                child.kill().await.ok();
+                let _ = child.wait().await;
+            }
+        }
         let sid = Arc::new(Mutex::new(resume_id));
         *session = Some(SessionState {
             cwd,
             session_id: sid,
             child: None,
+            permission_tx: None,
         });
         Ok(())
     }
 
-    /// Send an input event to zero.
+    /// Send a user message to zero.
     ///
-    /// Spawns a fresh `zero exec` process for each turn. If a previous turn
-    /// captured a `sessionId`, the new process is launched with
-    /// `--resume <sessionId>` so zero continues the same conversation.
+    /// Spawns a fresh `zero exec` process. Keeps stdin open via a background
+    /// writer task so that permission decisions can be forwarded mid-turn.
     pub async fn send(&self, event: InputEvent) -> Result<(), String> {
-        let (cwd, session_id_arc, old_child) = {
+        let (cwd, session_id_arc, old_child, old_tx) = {
             let mut session = self.session.lock().await;
             let s = session
                 .as_mut()
                 .ok_or_else(|| "No active zero session".to_string())?;
             let old = s.child.take();
-            (s.cwd.clone(), s.session_id.clone(), old)
+            let tx = s.permission_tx.take();
+            (s.cwd.clone(), s.session_id.clone(), old, tx)
         };
 
-        // Kill the previous process outside the lock so we don't hold it
-        // across async operations.
+        drop(old_tx);
+
         if let Some(mut child) = old_child {
             child.kill().await.ok();
             let _ = child.wait().await;
@@ -109,6 +128,7 @@ impl ZeroBridge {
         let zero_path = locate_zero()
             .map_err(|e| format!("Failed to locate zero CLI: {e}"))?
             .path;
+        log::info!("[bridge] spawning zero exec at {zero_path:?}, cwd={cwd:?}");
 
         let resume_id = {
             let id = session_id_arc.lock().await;
@@ -147,10 +167,9 @@ impl ZeroBridge {
             .take()
             .ok_or_else(|| "Failed to open stderr".to_string())?;
 
-        // Write the message and close stdin so zero reads exactly one turn.
-        let line = serde_json::to_string(&event).map_err(|e| e.to_string())?;
+        let initial_line = serde_json::to_string(&event).map_err(|e| e.to_string())?;
         stdin
-            .write_all(line.as_bytes())
+            .write_all(initial_line.as_bytes())
             .await
             .map_err(|e| e.to_string())?;
         stdin
@@ -158,29 +177,40 @@ impl ZeroBridge {
             .await
             .map_err(|e| e.to_string())?;
         stdin.flush().await.map_err(|e| e.to_string())?;
+        // `zero exec --input-format stream-json` reads stdin to EOF before it starts
+        // acting on any of it - confirmed by testing directly: with stdin held open,
+        // it produces no stdout/stderr/network activity at all, no matter how long you
+        // wait. It only begins the turn once stdin is closed. So we must close it here
+        // rather than keep it open for later writes (e.g. permission decisions - see
+        // send_permission_decision, which is consequently a no-op for now).
+        stdin.shutdown().await.map_err(|e| e.to_string())?;
         drop(stdin);
 
-        // Spawn stdout reader — captures sessionId from run_start events
-        // and forwards everything to the frontend.
         let app = self.app.clone();
         let sid = session_id_arc.clone();
         tokio::spawn(async move {
             let reader = BufReader::new(stdout);
             let mut lines = reader.lines();
             while let Ok(Some(line)) = lines.next_line().await {
-                if let Ok(event) = serde_json::from_str::<OutputEvent>(&line) {
-                    if event.event_type == "run_start" {
-                        if let Some(id) = event.payload["sessionId"].as_str() {
-                            let mut lock = sid.lock().await;
-                            *lock = Some(id.to_string());
+                match serde_json::from_str::<OutputEvent>(&line) {
+                    Ok(event) => {
+                        if event.event_type == "run_start" {
+                            if let Some(id) = event.payload["sessionId"].as_str() {
+                                let mut lock = sid.lock().await;
+                                *lock = Some(id.to_string());
+                            }
                         }
+                        let _ = app.emit("zero:event", event);
                     }
-                    let _ = app.emit("zero:event", event);
+                    Err(e) => {
+                        log::error!("[bridge] failed to parse stdout line: {e}: {line}");
+                        let _ = app.emit("zero:stderr", format!("[unparsed] {line}"));
+                    }
                 }
             }
+            let _ = app.emit("zero:process-exited", ());
         });
 
-        // Spawn stderr reader — forwards raw lines to the frontend.
         let app = self.app.clone();
         tokio::spawn(async move {
             let reader = BufReader::new(stderr);
@@ -190,10 +220,10 @@ impl ZeroBridge {
             }
         });
 
-        // Store the child so we can kill it on the next send() or on stop().
         {
             let mut session = self.session.lock().await;
             if let Some(ref mut s) = *session {
+                s.permission_tx = None;
                 s.child = Some(child);
             }
         }
@@ -201,10 +231,27 @@ impl ZeroBridge {
         Ok(())
     }
 
-    /// Stop the current session, killing any running child process.
+    /// Forward a permission decision back to zero.
+    ///
+    /// Not currently supported: `zero exec` reads stdin to EOF before acting on
+    /// anything, and we close stdin right after the initial message so the turn
+    /// actually runs (see `send()`). There is no channel left to deliver a
+    /// mid-run decision through. Approving/denying in the UI updates local
+    /// state but zero never sees the decision.
+    pub async fn send_permission_decision(
+        &self,
+        _permission_id: String,
+        _decision: String,
+    ) -> Result<(), String> {
+        Err("Permission decisions are not supported: zero exec closes stdin after \
+             the initial message, so there is no way to deliver a decision mid-run."
+            .to_string())
+    }
+
     pub async fn stop(&self) -> Result<(), String> {
         let mut session = self.session.lock().await;
         if let Some(mut s) = session.take() {
+            drop(s.permission_tx.take());
             if let Some(ref mut child) = s.child {
                 child.kill().await.ok();
                 let _ = child.wait().await;
@@ -300,6 +347,22 @@ mod tests {
         assert_eq!(event.event_type, "tool_result");
         assert_eq!(event.payload["toolUseId"], "tu-1");
         assert_eq!(event.payload["content"], "file contents here");
+    }
+
+    #[test]
+    fn test_input_event_permission_decision_serialization() {
+        let event = InputEvent::PermissionDecision {
+            schema_version: 2,
+            permission_id: "p-1".to_string(),
+            decision: "approved".to_string(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["schemaVersion"], 2);
+        assert_eq!(parsed["type"], "permission_decision");
+        assert_eq!(parsed["permissionId"], "p-1");
+        assert_eq!(parsed["decision"], "approved");
     }
 
     #[test]

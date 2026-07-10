@@ -3,5 +3,5 @@
 </template>
 
 <script setup>
-import ChatView from '@/components/ChatView.vue'
+import ChatView from "@/components/ChatView.vue";
 </script>

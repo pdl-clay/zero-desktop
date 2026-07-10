@@ -20,21 +20,21 @@ The workspace system provides:
 
 **File:** `src/stores/workspaces-store.js`
 
-| State | Type | Description |
-|---|---|---|
-| `workspaces` | `Array<{ path, name, addedAt }>` | All saved workspaces. |
-| `activePath` | `string \| null` | Path of the currently selected workspace. |
+| State        | Type                             | Description                               |
+| ------------ | -------------------------------- | ----------------------------------------- |
+| `workspaces` | `Array<{ path, name, addedAt }>` | All saved workspaces.                     |
+| `activePath` | `string \| null`                 | Path of the currently selected workspace. |
 
-| Action | Description |
-|---|---|
-| `add(path)` | Normalizes the path, extracts the directory name, deduplicates, pushes to array, saves to `localStorage`. If no workspace is active, auto-selects it. |
-| `remove(path)` | Filters out the path, saves to `localStorage`. If the removed workspace was active, selects the first remaining one (or sets to `null`). |
-| `select(path)` | Sets `activePath`. |
+| Action         | Description                                                                                                                                           |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `add(path)`    | Normalizes the path, extracts the directory name, deduplicates, pushes to array, saves to `localStorage`. If no workspace is active, auto-selects it. |
+| `remove(path)` | Filters out the path, saves to `localStorage`. If the removed workspace was active, selects the first remaining one (or sets to `null`).              |
+| `select(path)` | Sets `activePath`.                                                                                                                                    |
 
-| Getter | Description |
-|---|---|
-| `active` | Returns the full workspace object for `activePath` or `null`. |
-| `hasActive` | `true` if a workspace is selected. |
+| Getter      | Description                                                   |
+| ----------- | ------------------------------------------------------------- |
+| `active`    | Returns the full workspace object for `activePath` or `null`. |
+| `hasActive` | `true` if a workspace is selected.                            |
 
 ### Persistence
 
@@ -51,6 +51,7 @@ Workspaces are stored in `localStorage` under the key `zero-desktop-workspaces`.
 ```
 
 Persistence calls:
+
 - `loadWorkspaces()` — called at store creation (synchronous, blocks nothing).
 - `saveWorkspaces()` — called after every `add()` and `remove()`.
 
@@ -80,6 +81,7 @@ Persistence calls:
 ### Adding a Workspace
 
 Flow:
+
 1. User clicks the `+` button.
 2. `onBrowseAndAdd()` calls `open({ directory: true, multiple: false })` from `@tauri-apps/plugin-dialog`.
 3. The native OS folder picker opens (GTK on Linux, Finder on macOS, Explorer on Windows).
@@ -98,6 +100,7 @@ watch(activePath)
 ```
 
 The `startSession` action:
+
 1. Clears messages from the previous workspace.
 2. Calls `setupListeners()` to attach `zero:event` and `zero:stderr` listeners.
 3. Calls the Tauri command `start_zero_session(cwd)` which tells the Rust bridge the workspace directory.
@@ -109,12 +112,12 @@ The first message sent after selection causes the Rust bridge to spawn `zero exe
 
 ### Tauri Commands
 
-| Command | File | Description |
-|---|---|---|
-| `locate_zero_cli` | `lib.rs:59` | Finds zero binary and returns path + version. |
+| Command                                | File        | Description                                                       |
+| -------------------------------------- | ----------- | ----------------------------------------------------------------- |
+| `locate_zero_cli`                      | `lib.rs:59` | Finds zero binary and returns path + version.                     |
 | `start_zero_session(cwd, session_id?)` | `lib.rs:65` | Tells the bridge the workspace. Optional `session_id` for resume. |
-| `send_zero_message(content)` | `lib.rs:73` | Sends a user message. Bridge spawns `zero exec` if needed. |
-| `stop_zero_session` | `lib.rs:78` | Kills the current zero process and clears state. |
+| `send_zero_message(content)`           | `lib.rs:73` | Sends a user message. Bridge spawns `zero exec` if needed.        |
+| `stop_zero_session`                    | `lib.rs:78` | Kills the current zero process and clears state.                  |
 
 ### Bridge State (`bridge.rs`)
 

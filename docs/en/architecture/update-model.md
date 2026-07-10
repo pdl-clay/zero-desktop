@@ -6,10 +6,10 @@ This document defines how **zero-desktop** manages its own updates without inter
 
 > The lifecycle of **zero-desktop** is separate from the lifecycle of the **zero CLI**.
 
-| Component | Updated by | Mechanism |
-|---|---|---|
-| `zero-desktop` | zero-desktop | Tauri updater |
-| `zero` CLI | User or official script | `zero update --check`, npm, install script |
+| Component      | Updated by              | Mechanism                                  |
+| -------------- | ----------------------- | ------------------------------------------ |
+| `zero-desktop` | zero-desktop            | Tauri updater                              |
+| `zero` CLI     | User or official script | `zero update --check`, npm, install script |
 
 ## 2. zero-desktop Updates
 
@@ -58,11 +58,11 @@ The UI presents three options:
 
 Default isolated cache locations:
 
-| System | Path |
-|---|---|
-| Linux | `~/.local/share/zero-desktop/bin/zero` |
-| macOS | `~/Library/Application Support/zero-desktop/bin/zero` |
-| Windows | `%LOCALAPPDATA%\zero-desktop\bin\zero.exe` |
+| System  | Path                                                  |
+| ------- | ----------------------------------------------------- |
+| Linux   | `~/.local/share/zero-desktop/bin/zero`                |
+| macOS   | `~/Library/Application Support/zero-desktop/bin/zero` |
+| Windows | `%LOCALAPPDATA%\zero-desktop\bin\zero.exe`            |
 
 The isolated cache is only used when:
 

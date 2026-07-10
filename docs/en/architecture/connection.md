@@ -62,23 +62,23 @@ Manages the `zero exec` child process:
 
 ### 2.3 `ZeroBridge`
 
-Parses stream-json events and converts them into typed Tauri events.
+Parses stream-json events and converts them into typed Tauri events. Keeps stdin open via a background writer task so permission decisions can be forwarded back to zero mid-turn through an mpsc channel.
 
 Events emitted to the frontend:
 
-| Tauri event | zero type | Description |
-|---|---|---|
-| `zero:run-start` | `run_start` | Run started |
-| `zero:text` | `text` | Response text streaming |
-| `zero:reasoning` | `reasoning` | Model reasoning |
-| `zero:tool-call` | `tool_call` | Tool being invoked |
-| `zero:permission-request` | `permission_request` | Permission request |
-| `zero:permission-decision` | `permission_decision` | Permission decision |
-| `zero:tool-result` | `tool_result` | Tool result |
-| `zero:usage` | `usage` | Token usage |
-| `zero:final` | `final` | Final complete response |
-| `zero:run-end` | `run_end` | Run finished |
-| `zero:error` | `error` | Run error |
+| Tauri event                | zero type             | Description             |
+| -------------------------- | --------------------- | ----------------------- |
+| `zero:run-start`           | `run_start`           | Run started             |
+| `zero:text`                | `text`                | Response text streaming |
+| `zero:reasoning`           | `reasoning`           | Model reasoning         |
+| `zero:tool-call`           | `tool_call`           | Tool being invoked      |
+| `zero:permission-request`  | `permission_request`  | Permission request      |
+| `zero:permission-decision` | `permission_decision` | Permission decision     |
+| `zero:tool-result`         | `tool_result`         | Tool result             |
+| `zero:usage`               | `usage`               | Token usage             |
+| `zero:final`               | `final`               | Final complete response |
+| `zero:run-end`             | `run_end`             | Run finished            |
+| `zero:error`               | `error`               | Run error               |
 
 ### 2.4 `SessionStore` (local cache)
 
@@ -99,8 +99,9 @@ Storage format: JSON files under `%APP_DATA%/zero-desktop/sessions/`.
    { "schemaVersion": 2, "type": "message", "role": "user", "content": "..." }
    ```
 4. `ZeroBridge` reads stdout and emits Tauri events.
-5. Frontend renders text streaming, tool calls, and permission requests.
-6. On `run_end`, the conversation is finalized and metadata is saved.
+5. Frontend renders text streaming, tool calls, thinking blocks, and permission requests.
+6. If a `permission_request` arrives, the frontend shows approve/deny buttons. The user's decision is sent back via `send_permission_decision`, which the bridge forwards through the persistent stdin channel.
+7. On `run_end`, the conversation is finalized and metadata is saved.
 
 ## 4. Session Recovery
 

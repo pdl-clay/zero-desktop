@@ -21,6 +21,7 @@ We needed to choose the primary interface for the GUI without modifying zero or 
 Use the official JSONL protocol over stdin/stdout.
 
 **Pros:**
+
 - Public, documented, and stable interface.
 - Supports text streaming, tool calls, permission requests, reasoning, and token usage.
 - Supports sessions (`--resume`, `--fork`).
@@ -28,6 +29,7 @@ Use the official JSONL protocol over stdin/stdout.
 - Requires no changes to zero.
 
 **Cons:**
+
 - Each run is a new process; continuous conversations require open stdin or `--resume`.
 - Requires JSONL parsing and subprocess management in Rust.
 
@@ -36,10 +38,12 @@ Use the official JSONL protocol over stdin/stdout.
 Use zero as an MCP stdio server and the GUI as the MCP host.
 
 **Pros:**
+
 - Emerging standard for AI tools.
 - Exposes zero's tools in a structured way.
 
 **Cons:**
+
 - MCP stdio is tool-call oriented, not continuous chat.
 - Does not stream the LLM response.
 - Not the natural interface for a conversational experience.
@@ -49,9 +53,11 @@ Use zero as an MCP stdio server and the GUI as the MCP host.
 Modify zero to expose an HTTP API.
 
 **Pros:**
+
 - Would be the most GUI-friendly interface.
 
 **Cons:**
+
 - Requires forking and maintaining zero.
 - Conflicts with official updates.
 - Increases attack surface.

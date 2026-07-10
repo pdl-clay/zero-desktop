@@ -1,1 +1,231 @@
 // app global css
+
+// Theme-aware text/surface tokens for the chat cards (tool calls, thinking,
+// permissions, errors, input). Plain text inside these cards was inheriting
+// the browser's default black regardless of $q.dark, so cards read as the
+// same washed-out gray-with-black-text in both themes. Centralizing here
+// instead of repeating $q.dark.isActive ternaries in every component.
+:root {
+  --chat-text: rgba(0, 0, 0, 0.87);
+  --chat-text-muted: rgba(0, 0, 0, 0.6);
+  --chat-card-bg: rgba(0, 0, 0, 0.035);
+  --chat-card-border: rgba(0, 0, 0, 0.1);
+}
+
+body.body--dark {
+  --chat-text: rgba(255, 255, 255, 0.92);
+  --chat-text-muted: rgba(255, 255, 255, 0.65);
+  --chat-card-bg: rgba(255, 255, 255, 0.045);
+  --chat-card-border: rgba(255, 255, 255, 0.12);
+}
+
+// Markdown rendering for chat messages (assistant/system text, tool call
+// input/output). Content is injected via v-html so these rules must stay
+// global (unscoped) to reach it from TextMessage.vue / ToolCallMessage.vue.
+.md-chat-message {
+  .q-message-text-content {
+    line-height: 1.55;
+    color: var(--chat-text);
+  }
+
+  p {
+    margin: 0 0 0.5em;
+    &:last-child {
+      margin-bottom: 0;
+    }
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    margin: 0.8em 0 0.4em;
+    line-height: 1.3;
+    &:first-child {
+      margin-top: 0;
+    }
+  }
+  h1 {
+    font-size: 1.35em;
+  }
+  h2 {
+    font-size: 1.2em;
+  }
+  h3 {
+    font-size: 1.08em;
+  }
+
+  ul,
+  ol {
+    margin: 0.3em 0 0.6em;
+    padding-left: 1.4em;
+  }
+  li {
+    margin: 0.15em 0;
+  }
+  li > p {
+    margin: 0;
+  }
+
+  blockquote {
+    margin: 0.4em 0;
+    padding: 0.2em 0.9em;
+    border-left: 3px solid rgba(128, 128, 128, 0.4);
+    color: rgba(128, 128, 128, 0.95);
+  }
+
+  hr {
+    border: none;
+    border-top: 1px solid rgba(128, 128, 128, 0.3);
+    margin: 0.8em 0;
+  }
+
+  a {
+    color: #1976d2;
+    text-decoration: none;
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+
+  table {
+    border-collapse: collapse;
+    margin: 0.5em 0;
+    font-size: 0.92em;
+    display: block;
+    overflow-x: auto;
+  }
+  th,
+  td {
+    border: 1px solid rgba(128, 128, 128, 0.3);
+    padding: 4px 10px;
+    text-align: left;
+  }
+  th {
+    background: rgba(128, 128, 128, 0.12);
+    font-weight: 600;
+  }
+
+  code:not(.hljs) {
+    font-family: "JetBrains Mono", "Fira Code", Consolas, monospace;
+    font-size: 0.88em;
+    background: rgba(128, 128, 128, 0.18);
+    padding: 0.1em 0.4em;
+    border-radius: 4px;
+  }
+
+  pre.md-code {
+    margin: 0.5em 0;
+    padding: 10px 12px;
+    border-radius: 8px;
+    overflow-x: auto;
+    background: rgba(128, 128, 128, 0.1);
+    font-size: 0.85em;
+    line-height: 1.5;
+
+    code {
+      font-family: "JetBrains Mono", "Fira Code", Consolas, monospace;
+      background: none;
+      padding: 0;
+    }
+  }
+}
+
+// highlight.js token colors — light theme (default)
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-section,
+.hljs-link {
+  color: #d73a49;
+}
+.hljs-string,
+.hljs-addition,
+.hljs-attr,
+.hljs-meta .hljs-string {
+  color: #032f62;
+}
+.hljs-comment,
+.hljs-quote,
+.hljs-deletion {
+  color: #6a737d;
+  font-style: italic;
+}
+.hljs-number,
+.hljs-symbol,
+.hljs-variable,
+.hljs-template-variable {
+  color: #005cc5;
+}
+.hljs-title,
+.hljs-title.function_,
+.hljs-title.class_,
+.hljs-built_in,
+.hljs-name {
+  color: #6f42c1;
+}
+.hljs-type,
+.hljs-tag,
+.hljs-attribute {
+  color: #22863a;
+}
+.hljs-params {
+  color: inherit;
+}
+.hljs-meta {
+  color: #6a737d;
+}
+
+body.body--dark {
+  .md-chat-message {
+    blockquote {
+      border-left-color: rgba(200, 200, 200, 0.35);
+      color: rgba(200, 200, 200, 0.85);
+    }
+    a {
+      color: #64b5f6;
+    }
+  }
+
+  .hljs-keyword,
+  .hljs-selector-tag,
+  .hljs-literal,
+  .hljs-section,
+  .hljs-link {
+    color: #ff7b72;
+  }
+  .hljs-string,
+  .hljs-addition,
+  .hljs-attr,
+  .hljs-meta .hljs-string {
+    color: #a5d6ff;
+  }
+  .hljs-comment,
+  .hljs-quote,
+  .hljs-deletion {
+    color: #8b949e;
+  }
+  .hljs-number,
+  .hljs-symbol,
+  .hljs-variable,
+  .hljs-template-variable {
+    color: #79c0ff;
+  }
+  .hljs-title,
+  .hljs-title.function_,
+  .hljs-title.class_,
+  .hljs-built_in,
+  .hljs-name {
+    color: #d2a8ff;
+  }
+  .hljs-type,
+  .hljs-tag,
+  .hljs-attribute {
+    color: #7ee787;
+  }
+  .hljs-meta {
+    color: #8b949e;
+  }
+}
