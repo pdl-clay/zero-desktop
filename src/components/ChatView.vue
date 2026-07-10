@@ -15,7 +15,7 @@
         class="flex flex-center full-height text-grey-6 text-center"
       >
         <div>
-          <q-icon name="chat_bubble_outline" size="48px" class="q-mb-sm" />
+          <img src="/zero-completa.png" alt="Zero" style="width: auto; height: auto; margin-bottom: 8px" />
           <div class="text-body1">Envie uma mensagem para iniciar</div>
           <div class="text-caption">uma nova sessão</div>
         </div>
@@ -45,10 +45,11 @@
     </div>
 
     <!-- Input -->
-    <div :class="$q.dark.isActive ? 'bg-dark q-pa-md' : 'bg-grey-1 q-pa-md'">
+    <div :class="$q.dark.isActive ? 'bg-dark q-pa-xs' : 'bg-grey-1 q-pa-xs'">
       <q-input
         v-model="input"
         filled
+        dense
         type="textarea"
         autogrow
         :placeholder="$t('chat.placeholder')"

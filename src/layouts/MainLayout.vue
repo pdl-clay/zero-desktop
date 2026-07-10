@@ -268,7 +268,7 @@ const dragStartMouseY = ref(0)
 const dragHoldTimer = ref(null)
 const workspaceColumnRef = ref(null)
 
-const DRAG_HOLD_DELAY = 80
+const DRAG_HOLD_DELAY = 150
 
 watch(
   () => $q.screen.width,
