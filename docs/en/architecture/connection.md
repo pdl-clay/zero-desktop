@@ -6,117 +6,73 @@ This document describes how **zero-desktop** connects to the [zero](https://gith
 
 zero-desktop acts as a **graphical client** for zero. It does not implement the agent logic itself; it only orchestrates the `zero` binary already installed on the user's machine.
 
-Communication uses zero's **stream-json** protocol (`zero exec --input-format stream-json --output-format stream-json`), which is:
-
-- **Public and documented** in [`STREAM_JSON_PROTOCOL.md`](https://github.com/Gitlawb/zero/blob/main/docs/STREAM_JSON_PROTOCOL.md).
-- **Bidirectional** over stdin/stdout.
-- **JSONL-based**: one event per line.
-- **Suitable for interactive chat**, because it streams text, tool calls, permission requests, reasoning, and token usage.
+Communication uses **`zero acp`** - zero serving the [Agent Client Protocol](https://agentclientprotocol.com) (JSON-RPC 2.0, newline-delimited JSON over stdio), the same interface zero exposes for editor integrations (Zed, Neovim, ...). This replaced an earlier design based on `zero exec --input-format stream-json` (see [ADR 003](./decisions/003-migrate-to-acp.md)): `zero exec` is a one-shot batch command that reads stdin to EOF before acting on anything, so there was no channel to deliver anything back mid-turn - permission prompts could never actually reach the user. ACP keeps the process alive for the whole conversation and lets the agent send _us_ a request (`session/request_permission`) that we reply to over the same connection.
 
 ```text
 ┌─────────────────────────────────────┐
 │         Frontend Quasar (Vue)        │
 │  - Chat UI                           │
 │  - Execution history                 │
-│  - Permission prompts                │
+│  - Permission prompts (real ones)    │
 └─────────────┬───────────────────────┘
               │ Tauri commands / events
 ┌─────────────▼───────────────────────┐
 │           Tauri Core (Rust)          │
-│  - ZeroLocator                       │
-│  - ProcessManager                    │
-│  - ZeroBridge                        │
-│  - SessionStore (local cache)        │
+│  - locator (finds the zero binary)   │
+│  - acp (JSON-RPC 2.0 peer)           │
+│  - bridge (ZeroBridge: session       │
+│    lifecycle + event translation)    │
 └─────────────┬───────────────────────┘
-              │ stdin / stdout / stderr
+              │ stdin / stdout / stderr (JSON-RPC, newline-delimited)
 ┌─────────────▼───────────────────────┐
-│      zero exec (child process)       │
+│         zero acp (child process)     │
+│  - one process per active session    │
 │  - zero binary from PATH or cache    │
-│  - Updated independently             │
 └─────────────────────────────────────┘
 ```
 
 ## 2. Rust Backend Components
 
-### 2.1 `ZeroLocator`
+### 2.1 `locator`
 
-Responsible for locating the `zero` binary on the system.
+Locates the `zero` binary on the system (PATH, then the zero-desktop cache directory) and reads its version via `zero --version`.
 
-Resolution order:
+### 2.2 `acp` - the JSON-RPC peer
 
-1. `zero` on the user's `PATH`.
-2. Isolated zero-desktop cache (`%APP_DATA%/zero-desktop/bin/zero` on Windows, `~/.local/share/zero-desktop/bin/zero` on Linux, `~/Library/Application Support/zero-desktop/bin/zero` on macOS).
-3. If not found, trigger the installation assistant.
+A minimal, hand-rolled JSON-RPC 2.0 "peer" (not a client-only or server-only implementation, since ACP requires both roles over the same connection): sends requests and awaits their responses (`initialize`, `session/new`, `session/load`, `session/prompt`), while also being able to receive a request _from_ the agent (`session/request_permission`) and reply to it once the user decides. Notifications (`session/update`) are parsed the same way and handed to the caller with no reply expected.
 
-It also collects the version via `zero --version` for compatibility checks.
+### 2.3 `bridge` - `ZeroBridge`
 
-### 2.2 `ProcessManager`
+Owns **one `zero acp` process per active session** (not shared across sessions/workspaces - `zero` has no `session/cancel` method, so interrupting a turn means killing the process, and a shared process would take every other open conversation down with it). Responsibilities:
 
-Manages the `zero exec` child process:
+- Spawns `zero acp`, completes the `initialize` handshake, and opens a session (`session/new`, or `session/load` when resuming).
+- Runs the one task that reads the process's stdout, translating `session/update` notifications into the same `{schemaVersion, type, ...payload}` shape the app already renders (`text`, `reasoning`, `tool_call`, `tool_result`), and forwarding `session/request_permission` as a distinct, answerable event.
+- Writes a copy of every translated event to a local history file (see 2.4) as it happens, since `zero`'s own on-disk session log records far less in ACP mode than it used to in exec mode (verified directly: only `message` entries, no tool calls/reasoning/permission activity).
+- Respawns the process and reattaches via `session/load` if it was killed (cancel, or a crash) and a new message comes in.
 
-- Spawns the process with the correct arguments (`--input-format stream-json`, `--output-format stream-json`, `--cwd`, `--resume`, etc.).
-- Keeps stdin open for continuous turns.
-- Reads stdout/stderr line by line.
-- Sends input events (`message`, `prompt`) as JSONL.
-- Kills the process cleanly on cancellation.
+### 2.4 Local session history
 
-### 2.3 `ZeroBridge`
-
-Parses stream-json events and converts them into typed Tauri events. Keeps stdin open via a background writer task so permission decisions can be forwarded back to zero mid-turn through an mpsc channel.
-
-Events emitted to the frontend:
-
-| Tauri event                | zero type             | Description             |
-| -------------------------- | --------------------- | ----------------------- |
-| `zero:run-start`           | `run_start`           | Run started             |
-| `zero:text`                | `text`                | Response text streaming |
-| `zero:reasoning`           | `reasoning`           | Model reasoning         |
-| `zero:tool-call`           | `tool_call`           | Tool being invoked      |
-| `zero:permission-request`  | `permission_request`  | Permission request      |
-| `zero:permission-decision` | `permission_decision` | Permission decision     |
-| `zero:tool-result`         | `tool_result`         | Tool result             |
-| `zero:usage`               | `usage`               | Token usage             |
-| `zero:final`               | `final`               | Final complete response |
-| `zero:run-end`             | `run_end`             | Run finished            |
-| `zero:error`               | `error`               | Run error               |
-
-### 2.4 `SessionStore` (local cache)
-
-zero already persists sessions to disk. The zero-desktop `SessionStore` only:
-
-- Indexes sessions for the UI (`zero sessions list --json`).
-- Keeps lightweight metadata (title, workspace, model, date).
-- Does not replace zero's session format.
-
-Storage format: JSON files under `%APP_DATA%/zero-desktop/sessions/`.
+zero already indexes sessions (`zero sessions list --json`) and writes its own `~/.local/share/zero/sessions/<id>/events.jsonl`, but in ACP mode that file only contains `message` entries. So zero-desktop keeps its **own** richer log per session at `<app_data_dir>/zero-desktop/session-history/<sessionId>.jsonl`, written by the bridge alongside forwarding events to the frontend. `load_session_history` prefers this file when present, falling back to zero's own `events.jsonl` for sessions created before this existed (or created outside zero-desktop entirely).
 
 ## 3. Conversation Flow
 
 1. User types a message in the frontend.
-2. Frontend calls the Tauri command `send_message`.
-3. `ProcessManager` writes to the `zero exec` stdin:
-   ```json
-   { "schemaVersion": 2, "type": "message", "role": "user", "content": "..." }
-   ```
-4. `ZeroBridge` reads stdout and emits Tauri events.
-5. Frontend renders text streaming, tool calls, thinking blocks, and permission requests.
-6. If a `permission_request` arrives, the frontend shows approve/deny buttons. The user's decision is sent back via `send_permission_decision`, which the bridge forwards through the persistent stdin channel.
-7. On `run_end`, the conversation is finalized and metadata is saved.
+2. Frontend calls the Tauri command `send_zero_message`.
+3. `ZeroBridge` sends a `session/prompt` request over the peer for the current session and returns immediately - the request only resolves once the whole turn ends, so it's awaited in a background task rather than blocking the command.
+4. The stdout reader task translates each `session/update` notification into a `zero:event`, streaming text/reasoning/tool-call/tool-result to the frontend as it happens.
+5. If the agent needs a permission it can't auto-decide, it sends a real `session/request_permission` request. The bridge surfaces this as `zero:permission-request` and holds the request open.
+6. The frontend shows the options `zero` actually offered (not a fixed approve/deny - ACP can offer things like "allow", "allow for session", "reject"). The user's choice goes back via `respond_to_permission`, which the bridge delivers as the JSON-RPC reply to the still-open request - the agent genuinely receives it and continues (or stops) accordingly.
+7. Once `session/prompt` resolves, the bridge emits a `run_end`-shaped event and refreshes the session list.
 
 ## 4. Session Recovery
 
-Concerns about recovering sessions via stream-json are understandable, but the protocol is **reliable** because:
-
-- zero persists every turn to disk (`zero sessions list` can list them).
-- `zero exec --resume <session-id>` continues an existing session.
-- `zero exec --fork <session-id>` creates a branch.
-- `run_start` events include `sessionId`, letting the GUI correlate the run with the correct session.
-
-Therefore, even if the child process dies or the UI is closed, the session can be resumed from the latest state persisted by zero.
+- zero indexes every session (`zero sessions list --json`), regardless of transport.
+- `session/load` reattaches to a session by id (the ACP equivalent of `--resume`), used both when explicitly reopening an old session and when the bridge silently respawns after a cancel.
+- zero-desktop's own local history file (2.4) is what makes reopening a session show rich tool-call/reasoning/permission cards, since zero's own ACP-mode log doesn't retain that detail.
 
 ## 5. zero Installation
 
-When `ZeroLocator` cannot find the binary:
+When the locator cannot find the binary:
 
 1. The UI shows an installation assistant.
 2. The user chooses:
@@ -126,14 +82,16 @@ When `ZeroLocator` cannot find the binary:
 
 ## 6. Decisions and Constraints
 
-- **We do not use `zero serve --mcp` as the backbone** because MCP stdio is tool-oriented, not a continuous chat with streaming.
+- **We use `zero acp`, not `zero exec`**, specifically so permission requests can be answered for real - see [ADR 003](./decisions/003-migrate-to-acp.md) for the full comparison and what was verified live against the CLI.
+- **One `zero acp` process per session**, not a single process shared across the app - `zero` has no way to cancel a single in-flight turn, so cancellation is "kill the process," and that shouldn't take other open conversations down with it.
 - **We do not embed the zero binary** in the zero-desktop package to preserve zero's independent lifecycle.
 - **We do not modify zero**; we only use its public interfaces.
 - **Single workspace in alpha**: the alpha starts with one workspace. Multi-workspace support will be added later.
 
 ## 7. References
 
-- [Zero Stream-JSON Protocol](https://github.com/Gitlawb/zero/blob/main/docs/STREAM_JSON_PROTOCOL.md)
+- [Agent Client Protocol](https://agentclientprotocol.com)
 - [Zero Update Flow](https://github.com/Gitlawb/zero/blob/main/docs/UPDATE.md)
 - [`update-model.md`](./update-model.md)
-- [`decisions/001-connection-via-stream-json.md`](./decisions/001-connection-via-stream-json.md)
+- [`decisions/001-connection-via-stream-json.md`](./decisions/001-connection-via-stream-json.md) (superseded)
+- [`decisions/003-migrate-to-acp.md`](./decisions/003-migrate-to-acp.md)

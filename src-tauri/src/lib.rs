@@ -1,7 +1,10 @@
+pub mod acp;
 pub mod bridge;
 pub mod locator;
 
-use bridge::{InputEvent, ZeroBridge};
+use bridge::{history_path_for, ZeroBridge};
+use bridge::{get_session_title, remove_session_title, set_session_title};
+use bridge::{get_session_model, remove_session_model};
 use locator::locate_zero;
 use serde::Deserialize;
 use std::io::BufRead;
@@ -51,18 +54,8 @@ const RELEVANT_HISTORY_EVENT_TYPES: &[&str] = &[
     "error",
 ];
 
-#[tauri::command]
-fn load_session_history(session_id: String) -> Result<Vec<SessionEvent>, String> {
-    let data_dir = dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("zero")
-        .join("sessions")
-        .join(&session_id)
-        .join("events.jsonl");
-
-    let file = std::fs::File::open(&data_dir)
-        .map_err(|e| format!("Failed to open session events: {e}"))?;
-
+fn parse_events_jsonl(path: &PathBuf) -> Result<Vec<SessionEvent>, String> {
+    let file = std::fs::File::open(path).map_err(|e| format!("Failed to open session events: {e}"))?;
     let reader = std::io::BufReader::new(file);
     let mut events = Vec::new();
 
@@ -84,8 +77,43 @@ fn load_session_history(session_id: String) -> Result<Vec<SessionEvent>, String>
     Ok(events)
 }
 
+/// zero-desktop's own rich per-session log (see `bridge::history_path_for`)
+/// captures tool calls/reasoning/permission decisions that zero itself
+/// doesn't persist in ACP mode (verified live - `events.jsonl` there only
+/// has `message` entries). Prefer it when present; fall back to zero's own
+/// `events.jsonl` for sessions created before this existed, or created
+/// outside zero-desktop entirely.
+#[tauri::command]
+fn load_session_history(session_id: String) -> Result<Vec<SessionEvent>, String> {
+    if let Ok(local_path) = history_path_for(&session_id) {
+        if local_path.exists() {
+            return parse_events_jsonl(&local_path);
+        }
+    }
+
+    let zero_events_path = dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("zero")
+        .join("sessions")
+        .join(&session_id)
+        .join("events.jsonl");
+
+    parse_events_jsonl(&zero_events_path)
+}
+
+#[tauri::command]
+fn rename_session(session_id: String, title: String) -> Result<(), String> {
+    set_session_title(&session_id, &title)
+}
+
 #[tauri::command]
 async fn delete_session(session_id: String) -> Result<(), String> {
+    if let Ok(local_path) = history_path_for(&session_id) {
+        let _ = tokio::fs::remove_file(&local_path).await;
+    }
+    let _ = remove_session_title(&session_id);
+    let _ = remove_session_model(&session_id);
+
     let session_dir = dirs::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("zero")
@@ -124,10 +152,24 @@ async fn list_zero_sessions(cwd: PathBuf) -> Result<Vec<SessionInfo>, String> {
         .map_err(|e| format!("Failed to parse sessions JSON: {e}"))?;
 
     let cwd_str = cwd.to_string_lossy().to_string();
-    let filtered: Vec<SessionInfo> = all_sessions
+    let mut filtered: Vec<SessionInfo> = all_sessions
         .into_iter()
         .filter(|s| s.cwd == cwd_str)
         .collect();
+
+    // Overlay zero-desktop's own titles (auto-derived from the first
+    // message, or set by the user) - zero's own title for ACP-created
+    // sessions is just the generic "ACP session".
+    for session in &mut filtered {
+        if let Some(title) = get_session_title(&session.session_id) {
+            session.title = title;
+        }
+        if session.model_id.is_empty() {
+            if let Some(model_id) = get_session_model(&session.session_id) {
+                session.model_id = model_id;
+            }
+        }
+    }
 
     Ok(filtered)
 }
@@ -151,7 +193,7 @@ async fn send_zero_message(
     state: tauri::State<'_, Arc<ZeroBridge>>,
     content: String,
 ) -> Result<(), String> {
-    state.send(InputEvent::user_message(content)).await
+    state.send(content).await
 }
 
 #[tauri::command]
@@ -165,14 +207,12 @@ async fn cancel_zero_run(state: tauri::State<'_, Arc<ZeroBridge>>) -> Result<(),
 }
 
 #[tauri::command]
-async fn send_permission_decision(
+async fn respond_to_permission(
     state: tauri::State<'_, Arc<ZeroBridge>>,
-    permission_id: String,
-    decision: String,
+    request_id: String,
+    option_id: String,
 ) -> Result<(), String> {
-    state
-        .send_permission_decision(permission_id, decision)
-        .await
+    state.respond_to_permission(request_id, option_id).await
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -197,12 +237,13 @@ pub fn run() {
             locate_zero_cli,
             start_zero_session,
             send_zero_message,
-            send_permission_decision,
+            respond_to_permission,
             stop_zero_session,
             cancel_zero_run,
             list_zero_sessions,
             load_session_history,
-            delete_session
+            delete_session,
+            rename_session
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

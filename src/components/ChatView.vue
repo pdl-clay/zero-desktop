@@ -2,7 +2,7 @@
   <q-page class="column no-wrap chat-page" :style-fn="pageStyleFn">
     <q-banner v-if="zeroStore.zeroError" class="bg-negative text-white" dense rounded>
       <template v-slot:action>
-        <q-btn flat dense label="OK" @click="zeroStore.zeroError = null" />
+        <q-btn flat dense :label="$t('chat.errorDismiss')" @click="zeroStore.zeroError = null" />
       </template>
       {{ zeroStore.zeroError }}
     </q-banner>
@@ -16,23 +16,26 @@
       @scroll="onScroll"
     >
       <!-- Loading session history -->
-      <div
-        v-if="zeroStore.isLoadingSession"
-        class="flex flex-center full-height text-grey-6"
-      >
+      <div v-if="zeroStore.isLoadingSession" class="flex flex-center full-height text-grey-6">
         <div class="text-center" style="width: 100%; max-width: 500px">
           <q-spinner-dots size="40px" color="grey-6" />
           <div class="text-body1 q-mt-md">
             {{
               loadingSessionInfo
-                ? $t("chat.loadingSessionTitle", { title: loadingSessionInfo.title || loadingSessionInfo.session_id?.slice(-8) })
+                ? $t("chat.loadingSessionTitle", {
+                    title: loadingSessionInfo.title || loadingSessionInfo.session_id?.slice(-8),
+                  })
                 : $t("chat.loadingSession")
             }}
           </div>
           <div v-if="loadingSessionInfo" class="text-caption q-mt-xs text-grey-5">
             {{ loadingSessionInfo.model_id || "" }}
-            <template v-if="loadingSessionInfo.model_id && loadingSessionInfo.created_at">&nbsp;&middot;&nbsp;</template>
-            {{ loadingSessionInfo.created_at ? formatSessionDate(loadingSessionInfo.created_at) : "" }}
+            <template v-if="loadingSessionInfo.model_id && loadingSessionInfo.created_at"
+              >&nbsp;&middot;&nbsp;</template
+            >
+            {{
+              loadingSessionInfo.created_at ? formatSessionDate(loadingSessionInfo.created_at) : ""
+            }}
           </div>
 
           <!-- Skeleton placeholders -->
@@ -79,6 +82,10 @@
         <TextMessage v-if="message.type === 'text'" :message="message" />
         <ThinkingBlock v-else-if="message.type === 'thinking'" :message="message" />
         <ToolCallMessage v-else-if="message.type === 'tool_call'" :message="message" />
+        <PendingPermissionPanel
+          v-else-if="message.type === 'permission_request' && message.answerable"
+          :request="message"
+        />
         <PermissionDecisionBadge
           v-else-if="message.type === 'permission_request'"
           :message="permissionDecisionBadgeFrom(message)"
@@ -123,6 +130,7 @@
 <script setup>
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from "vue";
 import { useQuasar } from "quasar";
+import { useI18n } from "vue-i18n";
 import { useZeroStore } from "@/stores/zero-store";
 import { renderMarkdown } from "@/utils/markdown";
 import TextMessage from "@/components/chat/TextMessage.vue";
@@ -137,7 +145,8 @@ import ChatInput from "@/components/chat/ChatInput.vue";
 function permissionDecisionBadgeFrom(request) {
   return {
     toolName: request.toolName,
-    action: request.status === "denied" ? "deny" : "allow",
+    action:
+      request.answerable === false ? "expired" : request.status === "denied" ? "deny" : "allow",
     reason: request.reason,
     riskLevel: request.riskLevel,
   };
@@ -152,12 +161,15 @@ const props = defineProps({
 
 const $q = useQuasar();
 const zeroStore = useZeroStore();
+const { locale } = useI18n();
 const input = ref("");
 const messagesContainer = ref(null);
 const isUserAtBottom = ref(true);
 
 const pendingPermission = computed(() =>
-  zeroStore.messages.find((m) => m.type === "permission_request" && m.status === "pending"),
+  zeroStore.messages.find(
+    (m) => m.type === "permission_request" && m.status === "pending" && m.answerable,
+  ),
 );
 
 const loadingSessionInfo = computed(() => {
@@ -166,7 +178,11 @@ const loadingSessionInfo = computed(() => {
 });
 
 const canSend = computed(
-  () => zeroStore.isConnected && !zeroStore.runInProgress && !pendingPermission.value,
+  () =>
+    zeroStore.hasZero &&
+    !zeroStore.isConnecting &&
+    !zeroStore.runInProgress &&
+    !pendingPermission.value,
 );
 
 // Quasar's QPage defaults to `min-height`, which lets content grow past the
@@ -182,10 +198,11 @@ function pageStyleFn(offset, height) {
 function formatSessionDate(iso) {
   if (!iso) return "";
   const d = new Date(iso);
+  const currentLocale = locale.value;
   return (
-    d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "2-digit" }) +
+    d.toLocaleDateString(currentLocale, { day: "2-digit", month: "2-digit", year: "2-digit" }) +
     " " +
-    d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
+    d.toLocaleTimeString(currentLocale, { hour: "2-digit", minute: "2-digit" })
   );
 }
 

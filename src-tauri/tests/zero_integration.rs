@@ -1,11 +1,28 @@
 use std::time::Duration;
 
-use app_lib::bridge::{InputEvent, OutputEvent};
+use app_lib::bridge::OutputEvent;
 use app_lib::locator;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::time::timeout;
 
 const TURN_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// This suite drives `zero exec`'s stream-json protocol directly (not
+/// through `ZeroBridge`, which moved to `zero acp` - see `src/acp.rs` and
+/// `src/bridge.rs`) to keep regression coverage on the exec transport's
+/// contract itself, since `zero exec` is still a real, supported CLI mode.
+/// `ZeroBridge` no longer has its own `InputEvent` type for it (ACP sends
+/// JSON-RPC params directly instead of a serialized stdin enum), so this is
+/// a local, test-only equivalent of the one line of protocol it needs.
+fn user_message_line(content: &str) -> String {
+    serde_json::to_string(&serde_json::json!({
+        "schemaVersion": 2,
+        "type": "message",
+        "role": "user",
+        "content": content,
+    }))
+    .unwrap()
+}
 
 fn temp_workspace() -> std::path::PathBuf {
     let dir = std::env::temp_dir().join("zero-desktop-test");
@@ -109,8 +126,7 @@ async fn send_and_receive(
     let mut lines = BufReader::new(stdout).lines();
     let mut writer = tokio::io::BufWriter::new(stdin);
 
-    let event = InputEvent::user_message(content.to_string());
-    let line = serde_json::to_string(&event).map_err(|e| e.to_string())?;
+    let line = user_message_line(content);
     writer.write_all(line.as_bytes()).await.map_err(|e| e.to_string())?;
     writer.write_all(b"\n").await.map_err(|e| e.to_string())?;
     writer.flush().await.map_err(|e| e.to_string())?;
@@ -321,8 +337,8 @@ async fn test_multiple_turns_new_sessions() {
 
 #[tokio::test]
 async fn test_input_event_serialization() {
-    let event = InputEvent::user_message("test message".to_string());
-    let json = serde_json::to_value(&event).unwrap();
+    let line = user_message_line("test message");
+    let json: serde_json::Value = serde_json::from_str(&line).unwrap();
 
     assert_eq!(json["schemaVersion"], 2);
     assert_eq!(json["type"], "message");

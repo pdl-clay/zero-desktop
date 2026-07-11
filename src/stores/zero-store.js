@@ -9,10 +9,12 @@ import {
   onZeroEvent,
   onZeroStderr,
   onZeroProcessExited,
+  onZeroPermissionRequest,
   listZeroSessions,
   loadSessionHistory,
   deleteSession,
-  sendPermissionDecision,
+  renameSession,
+  respondToPermission as respondToPermissionApi,
 } from "@/services/zero";
 
 const MAX_STDERR_LINES = 20;
@@ -39,6 +41,7 @@ export const useZeroStore = defineStore("zero", {
     unlistenEvent: null,
     unlistenStderr: null,
     unlistenProcessExited: null,
+    unlistenPermissionRequest: null,
     runInProgress: false,
     isLoadingSession: false,
     lastStderrLines: [],
@@ -123,8 +126,16 @@ export const useZeroStore = defineStore("zero", {
     },
 
     async sendMessage(content) {
+      if (!this.currentWorkspace) {
+        this.zeroError = "No workspace provided";
+        return;
+      }
+
       if (!this.isConnected) {
-        this.zeroError = "Not connected to a workspace";
+        await this.startSession(this.currentWorkspace);
+      }
+
+      if (!this.isConnected) {
         return;
       }
 
@@ -236,12 +247,6 @@ export const useZeroStore = defineStore("zero", {
     // does instead of only showing plain text messages.
     buildMessagesFromHistory(events) {
       this.messages = [];
-      // Load permission decisions saved from a previous live session so that
-      // recovered permission cards show the correct approved/denied status
-      // instead of all appearing as "pending" with fresh Approve/Deny buttons.
-      const savedDecisions = this.currentSessionId
-        ? this._loadPermissionDecisions(this.currentSessionId)
-        : {};
 
       for (const event of events) {
         const payload = event.payload || {};
@@ -267,14 +272,20 @@ export const useZeroStore = defineStore("zero", {
             break;
 
           case "tool_call": {
-            let args = {};
-            try {
-              args =
-                typeof payload.arguments === "string"
-                  ? JSON.parse(payload.arguments)
-                  : payload.arguments || {};
-            } catch {
-              args = {};
+            // Local history (written by bridge.rs for ACP sessions) already
+            // stores `args` as an object, matching the live event shape
+            // exactly. Older sessions replayed from zero's own pre-migration
+            // events.jsonl used `arguments` as a JSON *string* instead.
+            let args = payload.args;
+            if (args === undefined) {
+              try {
+                args =
+                  typeof payload.arguments === "string"
+                    ? JSON.parse(payload.arguments)
+                    : payload.arguments || {};
+              } catch {
+                args = {};
+              }
             }
             this.addToolCall({ name: payload.name, id: payload.id, args });
             break;
@@ -282,43 +293,22 @@ export const useZeroStore = defineStore("zero", {
 
           case "tool_result":
             this.updateToolCallResult({
-              id: payload.toolCallId,
+              id: payload.id || payload.toolCallId,
               status: payload.status,
               output: payload.output,
             });
             break;
 
-          case "permission_request": {
-            this.addPermissionRequest(payload);
-            // Restore any decision the user made during the live session.
-            const permId = payload.toolCallId || payload.permissionId;
-            if (permId && savedDecisions[permId]) {
-              const msg = this.messages[this.messages.length - 1];
-              if (msg && msg.type === "permission_request") {
-                msg.status = savedDecisions[permId];
-              }
-            }
+          case "permission_request":
+            // Requests replayed from history are never answerable: the process
+            // that asked is gone. Force answerable:false so the UI renders them
+            // as read-only decision badges instead of active panels.
+            this.addPermissionRequest({ ...payload, answerable: false });
             break;
-          }
 
-          case "permission_decision": {
-            // When a permission_decision event exists in history, try to
-            // update the matching permission_request card instead of creating
-            // a separate badge so the card reflects the final state.
-            const permId = payload.permissionId;
-            const action = payload.action;
-            const req = permId
-              ? this.messages.find(
-                  (m) => m.type === "permission_request" && m.permissionId === permId,
-                )
-              : null;
-            if (req) {
-              req.status = action === "deny" ? "denied" : "approved";
-            } else {
-              this.addPermissionDecision(payload);
-            }
+          case "permission_decision":
+            this.addPermissionDecision(payload);
             break;
-          }
 
           case "error":
             this.messages.push({
@@ -335,52 +325,27 @@ export const useZeroStore = defineStore("zero", {
       }
     },
 
-    // ---- localStorage helpers for permission decisions --------------------
-    // Because send_permission_decision cannot deliver decisions mid-run
-    // (zero reads stdin to EOF before acting), decisions are persisted
-    // client-side so that recovered sessions show the correct
-    // approved/denied state instead of resetting every card to "pending".
-
-    _permStorageKey(sessionId) {
-      return `zero-desktop-permissions-${sessionId}`;
-    },
-
-    _loadPermissionDecisions(sessionId) {
-      try {
-        const raw = localStorage.getItem(this._permStorageKey(sessionId));
-        return raw ? JSON.parse(raw) : {};
-      } catch {
-        return {};
-      }
-    },
-
-    _savePermissionDecision(sessionId, permissionId, decision) {
-      const decisions = this._loadPermissionDecisions(sessionId);
-      decisions[permissionId] = decision;
-      try {
-        localStorage.setItem(this._permStorageKey(sessionId), JSON.stringify(decisions));
-      } catch {
-        // localStorage full or unavailable — non-critical.
-      }
-    },
-
-    _clearPermissionDecisions(sessionId) {
-      try {
-        localStorage.removeItem(this._permStorageKey(sessionId));
-      } catch {
-        // ignore
-      }
-    },
-
     async removeSession(sessionId) {
       try {
         await deleteSession(sessionId);
-        this._clearPermissionDecisions(sessionId);
         if (this.currentSessionId === sessionId) {
           this.currentSessionId = null;
           this.messages = [];
           this._stopSessionSync();
         }
+        if (this.currentWorkspace) {
+          await this.loadSessions(this.currentWorkspace);
+        }
+      } catch (err) {
+        this.zeroError = String(err);
+      }
+    },
+
+    async renameSession(sessionId, title) {
+      const trimmed = title.trim();
+      if (!trimmed) return;
+      try {
+        await renameSession(sessionId, trimmed);
         if (this.currentWorkspace) {
           await this.loadSessions(this.currentWorkspace);
         }
@@ -406,6 +371,11 @@ export const useZeroStore = defineStore("zero", {
       this.unlistenProcessExited = await onZeroProcessExited(() => {
         this.handleProcessExited();
       });
+
+      this.unlistenPermissionRequest = await onZeroPermissionRequest((event) => {
+        this.finalizeThinking();
+        this.addPermissionRequest(event.payload);
+      });
     },
 
     removeListeners() {
@@ -420,6 +390,10 @@ export const useZeroStore = defineStore("zero", {
       if (this.unlistenProcessExited) {
         this.unlistenProcessExited();
         this.unlistenProcessExited = null;
+      }
+      if (this.unlistenPermissionRequest) {
+        this.unlistenPermissionRequest();
+        this.unlistenPermissionRequest = null;
       }
     },
 
@@ -486,11 +460,6 @@ export const useZeroStore = defineStore("zero", {
 
         case "tool_result":
           this.updateToolCallResult(event);
-          break;
-
-        case "permission_request":
-          this.finalizeThinking();
-          this.addPermissionRequest(event);
           break;
 
         case "permission_decision":
@@ -600,20 +569,19 @@ export const useZeroStore = defineStore("zero", {
     },
 
     addPermissionRequest(event) {
-      const args = event.args || {};
-      const commandSummary =
-        typeof args.cmd === "string"
-          ? args.cmd
-          : Object.keys(args).length
-            ? JSON.stringify(args)
-            : "";
       this.messages.push({
         id: nextId(),
         type: "permission_request",
-        permissionId: event.toolCallId || event.permissionId,
-        toolName: event.name || event.toolName,
-        proposedCommand: commandSummary || event.proposedCommand || "",
+        // `requestId` is the live shape (from bridge.rs's translate_permission_request).
+        // Older sessions replayed from zero's own pre-migration events.jsonl
+        // used different field names - kept as a fallback so history replay
+        // doesn't blow up, though there's no live process left to answer
+        // those anyway.
+        requestId: event.requestId || event.toolCallId || event.permissionId,
+        toolName: event.toolName || event.name,
         reason: event.reason || event.justification || "",
+        options: event.options || [],
+        answerable: event.answerable !== false,
         status: "pending",
         timestamp: Date.now(),
       });
@@ -631,39 +599,16 @@ export const useZeroStore = defineStore("zero", {
       });
     },
 
-    async approvePermission(permissionId) {
+    async respondToPermission(requestId, optionId) {
       const msg = this.messages.find(
         (m) =>
-          m.type === "permission_request" &&
-          m.permissionId === permissionId &&
-          m.status === "pending",
+          m.type === "permission_request" && m.requestId === requestId && m.status === "pending",
       );
       if (!msg) return;
-      msg.status = "approved";
-      if (this.currentSessionId) {
-        this._savePermissionDecision(this.currentSessionId, permissionId, "approved");
-      }
+      msg.status = optionId.startsWith("allow") ? "approved" : "denied";
+      msg.chosenOptionId = optionId;
       try {
-        await sendPermissionDecision(permissionId, "approved");
-      } catch (error) {
-        this.zeroError = error;
-      }
-    },
-
-    async denyPermission(permissionId) {
-      const msg = this.messages.find(
-        (m) =>
-          m.type === "permission_request" &&
-          m.permissionId === permissionId &&
-          m.status === "pending",
-      );
-      if (!msg) return;
-      msg.status = "denied";
-      if (this.currentSessionId) {
-        this._savePermissionDecision(this.currentSessionId, permissionId, "denied");
-      }
-      try {
-        await sendPermissionDecision(permissionId, "denied");
+        await respondToPermissionApi(requestId, optionId);
       } catch (error) {
         this.zeroError = error;
       }

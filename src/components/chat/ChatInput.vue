@@ -16,7 +16,12 @@
           size="14px"
           class="q-mr-xs q-mt-xs"
         />
-        <span :class="['chat-input__plan-text', item.status === 'completed' ? 'chat-input__plan-text--done' : '']">
+        <span
+          :class="[
+            'chat-input__plan-text',
+            item.status === 'completed' ? 'chat-input__plan-text--done' : '',
+          ]"
+        >
           {{ item.content }}
         </span>
       </div>

@@ -1,15 +1,10 @@
 <template>
   <div class="permission-decision row items-start q-mb-sm">
-    <q-icon
-      :name="allowed ? 'shield' : 'block'"
-      :color="allowed ? 'positive' : 'negative'"
-      size="14px"
-      class="q-mr-xs q-mt-xs"
-    />
+    <q-icon :name="iconName" :color="iconColor" size="14px" class="q-mr-xs q-mt-xs" />
     <div class="text-caption text-grey-7">
       <span class="text-weight-medium">{{ message.toolName }}</span>
       —
-      <span>{{ allowed ? $t("chat.decisionAllowed") : $t("chat.decisionDenied") }}</span>
+      <span>{{ statusText }}</span>
       <span v-if="message.reason">: {{ message.reason }}</span>
       <q-badge
         v-if="message.riskLevel"
@@ -32,7 +27,24 @@ const props = defineProps({
 
 const { t: $t } = useI18n();
 
-const allowed = computed(() => props.message.action !== "deny");
+const isExpired = computed(() => props.message.action === "expired");
+
+const allowed = computed(() => props.message.action !== "deny" && !isExpired.value);
+
+const iconName = computed(() => {
+  if (isExpired.value) return "schedule";
+  return allowed.value ? "shield" : "block";
+});
+
+const iconColor = computed(() => {
+  if (isExpired.value) return "grey-6";
+  return allowed.value ? "positive" : "negative";
+});
+
+const statusText = computed(() => {
+  if (isExpired.value) return $t("chat.decisionExpired");
+  return allowed.value ? $t("chat.decisionAllowed") : $t("chat.decisionDenied");
+});
 
 const riskColor = computed(() => {
   switch (props.message.riskLevel) {

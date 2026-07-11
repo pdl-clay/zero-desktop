@@ -95,10 +95,33 @@ export async function deleteSession(sessionId) {
 }
 
 /**
- * Send a permission decision back to zero.
- * @param {string} permissionId
- * @param {string} decision - "approved" or "denied"
+ * Rename a session. zero itself gives ACP-created sessions a generic "ACP
+ * session" title with no protocol method found to change it, so
+ * zero-desktop tracks titles locally (auto-set from the first message, or
+ * overridden here).
+ * @param {string} sessionId
+ * @param {string} title
  */
-export async function sendPermissionDecision(permissionId, decision) {
-  return invoke("send_permission_decision", { permissionId, decision });
+export async function renameSession(sessionId, title) {
+  return invoke("rename_session", { sessionId, title });
+}
+
+/**
+ * Answer a pending permission request from zero. Unlike the old exec-based
+ * transport, this reply actually reaches the agent (delivered over the
+ * persistent zero acp JSON-RPC connection).
+ * @param {string} requestId - correlation id from the permission-request event
+ * @param {string} optionId - one of the option ids offered in that event
+ */
+export async function respondToPermission(requestId, optionId) {
+  return invoke("respond_to_permission", { requestId, optionId });
+}
+
+/**
+ * Listen for a real permission request from zero, awaiting a reply.
+ * @param {(event: { payload: { requestId: string, toolName: string, reason: string, options: Array } }) => void} callback
+ * @returns {Promise<() => void>}
+ */
+export async function onZeroPermissionRequest(callback) {
+  return listen("zero:permission-request", callback);
 }

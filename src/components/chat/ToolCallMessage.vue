@@ -1,7 +1,12 @@
 <template>
   <div :class="['tool-call-card q-mb-sm', cardClass]">
     <div class="row items-center q-px-sm q-py-xs">
-      <q-spinner-dots v-if="message.status === 'running'" size="14px" color="info" class="q-mr-sm" />
+      <q-spinner-dots
+        v-if="message.status === 'running'"
+        size="14px"
+        color="info"
+        class="q-mr-sm"
+      />
       <q-icon
         v-else
         :name="isError ? 'error' : 'check_circle'"
@@ -163,7 +168,11 @@ const editPreview = computed(() => {
   const name = props.message.toolName;
   const input = props.message.input || {};
 
-  if (name === "edit_file" && typeof input.old_str === "string" && typeof input.new_str === "string") {
+  if (
+    name === "edit_file" &&
+    typeof input.old_str === "string" &&
+    typeof input.new_str === "string"
+  ) {
     const lines = [
       ...input.old_str.split("\n").map((text) => ({ type: "removed", text: `- ${text}` })),
       ...input.new_str.split("\n").map((text) => ({ type: "added", text: `+ ${text}` })),

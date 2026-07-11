@@ -58,7 +58,9 @@
                 color="negative"
                 @click.stop="onRemoveWorkspace(ws)"
               >
-                <q-tooltip>Remover {{ ws.name }}</q-tooltip>
+                <q-tooltip>{{
+                  $t("workspace.removeWorkspaceTooltip", { name: ws.name })
+                }}</q-tooltip>
               </q-btn>
               <q-tooltip anchor="center right" self="center left" :offset="[8, 0]">
                 <div class="text-weight-bold">{{ ws.name }}</div>
@@ -94,11 +96,13 @@
             class="q-mt-xs"
             @click="toggleTheme"
           >
-            <q-tooltip>{{ $q.dark.isActive ? "Modo claro" : "Modo escuro" }}</q-tooltip>
+            <q-tooltip>{{
+              $q.dark.isActive ? $t("theme.lightMode") : $t("theme.darkMode")
+            }}</q-tooltip>
           </q-btn>
 
           <q-btn flat round dense icon="settings" color="grey-7" size="sm" class="q-mt-xs q-mb-xs">
-            <q-tooltip>Configurações</q-tooltip>
+            <q-tooltip>{{ $t("settings.title") }}</q-tooltip>
           </q-btn>
         </div>
         <!-- Right session panel -->
@@ -123,11 +127,11 @@
             </q-banner>
 
             <template v-if="workspacesStore.hasActive">
-              <div class="text-caption panel-section-label q-mb-sm">
+              <div class="text-caption panel-section-label q-mb-sm" style="min-width: 0">
                 {{ $t("workspace.sessions", { count: zeroStore.sessions.length }) }}
               </div>
 
-              <q-scroll-area class="col">
+              <q-scroll-area class="col" style="min-width: 0">
                 <!-- Session list -->
                 <q-list dense class="q-gutter-y-xs">
                   <div
@@ -150,18 +154,38 @@
                         <q-icon :name="sessionIcon(session.kind)" size="16px" color="grey-6" />
                       </q-item-section>
 
-                      <q-item-section>
-                        <q-item-label class="text-body2" lines="1">
-                          {{ session.title || session.session_id.slice(-8) }}
+                      <q-item-section class="session-item__content">
+                        <q-item-label class="text-body2 session-item__title" lines="1">
+                          {{ truncateTitle(session.title) || session.session_id.slice(-8) }}
+                          <q-tooltip v-if="session.title" anchor="top middle" self="bottom middle">
+                            {{ session.title }}
+                          </q-tooltip>
                         </q-item-label>
-                        <q-item-label caption class="row items-center q-gutter-x-xs">
-                          <span>{{ session.model_id }}</span>
-                          <span>&middot;</span>
-                          <span>{{ formatDate(session.created_at) }}</span>
+                        <q-item-label
+                          caption
+                          class="row items-center q-gutter-x-xs session-item__meta"
+                        >
+                          <span v-if="session.model_id" class="ellipsis">{{
+                            session.model_id
+                          }}</span>
+                          <span v-if="session.model_id">&middot;</span>
+                          <span class="ellipsis">{{ formatDate(session.created_at) }}</span>
                         </q-item-label>
                       </q-item-section>
                     </q-item>
 
+                    <q-btn
+                      class="session-rename-btn"
+                      round
+                      dense
+                      flat
+                      size="xs"
+                      icon="edit"
+                      color="grey-7"
+                      @click.stop="onRenameSession(session)"
+                    >
+                      <q-tooltip>{{ $t("workspace.renameSession") }}</q-tooltip>
+                    </q-btn>
                     <q-btn
                       class="session-remove-btn"
                       round
@@ -256,12 +280,14 @@
 <script setup>
 import { ref, onMounted, watch } from "vue";
 import { useQuasar } from "quasar";
+import { useI18n } from "vue-i18n";
 import { useZeroStore } from "@/stores/zero-store";
 import { useWorkspacesStore } from "@/stores/workspaces-store";
 import { open } from "@tauri-apps/plugin-dialog";
 import ChatView from "@/components/ChatView.vue";
 
 const $q = useQuasar();
+const { t } = useI18n();
 const zeroStore = useZeroStore();
 const workspacesStore = useWorkspacesStore();
 const leftDrawerOpen = ref(true);
@@ -326,6 +352,15 @@ function avatarStyle(ws) {
   };
 }
 
+const SESSION_TITLE_MAX_CHARS = 20;
+
+function truncateTitle(title) {
+  if (!title) return "";
+  return title.length > SESSION_TITLE_MAX_CHARS
+    ? title.slice(0, SESSION_TITLE_MAX_CHARS) + "…"
+    : title;
+}
+
 function sessionIcon(kind) {
   switch (kind) {
     case "fork":
@@ -337,13 +372,16 @@ function sessionIcon(kind) {
   }
 }
 
+const { locale } = useI18n();
+
 function formatDate(iso) {
   if (!iso) return "";
   const d = new Date(iso);
+  const currentLocale = locale.value;
   return (
-    d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "2-digit" }) +
+    d.toLocaleDateString(currentLocale, { day: "2-digit", month: "2-digit", year: "2-digit" }) +
     " " +
-    d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
+    d.toLocaleTimeString(currentLocale, { hour: "2-digit", minute: "2-digit" })
   );
 }
 
@@ -371,8 +409,14 @@ watch(
     if (oldPath && zeroStore.isConnected) {
       await zeroStore.stopSession();
     }
-    if (newPath && zeroStore.hasZero) {
-      await zeroStore.startSession(newPath);
+    if (newPath) {
+      zeroStore.currentWorkspace = newPath;
+      zeroStore.currentSessionId = null;
+      zeroStore.messages = [];
+      zeroStore.currentResponse = "";
+      zeroStore.currentThinking = "";
+      zeroStore.currentPlan = [];
+      zeroStore.runInProgress = false;
       await zeroStore.loadSessions(newPath);
     }
   },
@@ -401,6 +445,20 @@ async function onDeleteSession(session) {
   await zeroStore.removeSession(session.session_id);
 }
 
+function onRenameSession(session) {
+  $q.dialog({
+    title: t("workspace.renameSession"),
+    prompt: {
+      model: session.title || "",
+      type: "text",
+    },
+    cancel: true,
+    persistent: false,
+  }).onOk((title) => {
+    zeroStore.renameSession(session.session_id, title);
+  });
+}
+
 async function onNewSession() {
   const cwd = workspacesStore.activePath;
   if (!cwd) return;
@@ -411,7 +469,7 @@ async function onBrowseAndAdd() {
   const selected = await open({
     directory: true,
     multiple: false,
-    title: "Selecionar diret\u00f3rio do projeto",
+    title: t("workspace.addWorkspaceTitle"),
   });
   if (selected) {
     workspacesStore.add(selected);
@@ -695,22 +753,58 @@ function onDocumentMouseUp() {
 
 .session-item-wrapper {
   position: relative;
-  max-width: 78%;
+  min-width: 0;
+  width: 100%;
 }
 
-.session-remove-btn {
+.session-remove-btn,
+.session-rename-btn {
   position: absolute;
   top: 2px;
-  right: 2px;
   z-index: 1;
   opacity: 0;
   transform: scale(0.4);
   transition: all 0.15s ease;
 }
 
-.session-item-wrapper:hover .session-remove-btn {
+.session-remove-btn {
+  right: 2px;
+}
+
+.session-rename-btn {
+  right: 24px;
+}
+
+.session-item-wrapper:hover .session-remove-btn,
+.session-item-wrapper:hover .session-rename-btn {
   opacity: 1;
   transform: scale(1);
+}
+
+.session-item-wrapper :deep(.q-item__section--main) {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.session-item__content {
+  min-width: 0 !important;
+  overflow: hidden;
+}
+
+.session-item__title,
+.session-item__meta {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-item__meta span {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .session-panel {
@@ -749,7 +843,8 @@ function onDocumentMouseUp() {
   border-radius: 10px;
   border: 1px solid transparent;
   color: var(--chat-text);
-  width: 87%;
+  width: 100%;
+  min-width: 0;
   transition:
     background 0.15s ease,
     border-color 0.15s ease;

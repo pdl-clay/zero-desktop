@@ -1,44 +1,21 @@
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::Emitter;
+use tokio::fs::OpenOptions;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, Command};
-use tokio::sync::{mpsc, Mutex};
+use tokio::process::{Child, ChildStdout, Command};
+use tokio::sync::Mutex;
 
+use crate::acp::{parse_line, AcpMessage, AcpPeer};
 use crate::locator::locate_zero;
 
-/// Input events accepted by zero's stream-json protocol.
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(tag = "type")]
-#[serde(rename_all = "snake_case")]
-pub enum InputEvent {
-    Message {
-        #[serde(rename = "schemaVersion")]
-        schema_version: i32,
-        role: String,
-        content: String,
-    },
-    PermissionDecision {
-        #[serde(rename = "schemaVersion")]
-        schema_version: i32,
-        #[serde(rename = "permissionId")]
-        permission_id: String,
-        decision: String,
-    },
-}
-
-impl InputEvent {
-    pub fn user_message(content: String) -> Self {
-        Self::Message {
-            schema_version: 2,
-            role: "user".to_string(),
-            content,
-        }
-    }
-}
-
-/// Output events emitted by zero's stream-json protocol.
-/// We only deserialize the fields we care about; unknown fields are ignored.
+/// Events emitted to the frontend on `zero:event`. Kept in the same shape
+/// zero's old stream-json protocol used ({schemaVersion, type, ...payload})
+/// so the frontend (zero-store.js) barely needs to change across the
+/// exec -> acp migration - we translate ACP's notifications into this shape
+/// here instead of teaching the frontend ACP's native format.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct OutputEvent {
     #[serde(rename = "schemaVersion")]
@@ -49,31 +26,361 @@ pub struct OutputEvent {
     pub payload: serde_json::Value,
 }
 
-/// Persistent state for a zero session across turns.
-struct SessionState {
-    cwd: PathBuf,
-    session_id: Arc<Mutex<Option<String>>>,
-    child: Option<Child>,
-    /// Sender for forwarding permission decisions to the stdin writer task.
-    /// Dropping this closes the channel, which causes the writer to finish
-    /// and drop stdin, signalling end-of-input to zero.
-    permission_tx: Option<mpsc::Sender<InputEvent>>,
+impl OutputEvent {
+    fn new(event_type: &str, payload: serde_json::Value) -> Self {
+        Self {
+            schema_version: 2,
+            event_type: event_type.to_string(),
+            payload,
+        }
+    }
 }
 
-/// Bridge that manages the zero CLI child process and forwards events.
+/// ACP's tool_call/tool_call_update don't carry a clean `name` field like
+/// zero exec's tool_call event did (verified live) - `toolCallId` looks like
+/// `"read_file_0"`. Best-effort recovery of the tool name by stripping the
+/// trailing `_<digits>` counter.
+fn tool_name_from_call_id(tool_call_id: &str) -> String {
+    match tool_call_id.rsplit_once('_') {
+        Some((prefix, suffix)) if !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit()) => {
+            prefix.to_string()
+        }
+        _ => tool_call_id.to_string(),
+    }
+}
+
+fn extract_tool_result_text(content: Option<&serde_json::Value>) -> String {
+    content
+        .and_then(|c| c.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|item| item.get("content"))
+        .and_then(|c| c.get("text"))
+        .and_then(|t| t.as_str())
+        .unwrap_or("")
+        .to_string()
+}
+
+/// Translate an ACP `session/update` notification's `params` into our
+/// internal event shape. Returns `None` for update kinds we don't render.
+fn translate_session_update(params: &serde_json::Value) -> Option<OutputEvent> {
+    let update = params.get("update")?;
+    let kind = update.get("sessionUpdate")?.as_str()?;
+
+    match kind {
+        "agent_message_chunk" => {
+            let text = update["content"]["text"].as_str().unwrap_or("");
+            Some(OutputEvent::new("text", serde_json::json!({ "delta": text })))
+        }
+        "agent_thought_chunk" => {
+            let text = update["content"]["text"].as_str().unwrap_or("");
+            Some(OutputEvent::new("reasoning", serde_json::json!({ "delta": text })))
+        }
+        "tool_call" => {
+            let tool_call_id = update["toolCallId"].as_str().unwrap_or("");
+            let name = tool_name_from_call_id(tool_call_id);
+            Some(OutputEvent::new(
+                "tool_call",
+                serde_json::json!({
+                    "id": tool_call_id,
+                    "name": name,
+                    "args": update.get("rawInput").cloned().unwrap_or(serde_json::json!({})),
+                }),
+            ))
+        }
+        "tool_call_update" => {
+            let tool_call_id = update["toolCallId"].as_str().unwrap_or("");
+            let status = update["status"].as_str().unwrap_or("completed");
+            let is_error = status == "failed" || status == "error";
+            let output = extract_tool_result_text(update.get("content"));
+            Some(OutputEvent::new(
+                "tool_result",
+                serde_json::json!({
+                    "id": tool_call_id,
+                    "status": if is_error { "error" } else { "ok" },
+                    "output": output,
+                }),
+            ))
+        }
+        _ => None,
+    }
+}
+
+/// Translate a `session/request_permission` request's params into the
+/// payload emitted on `zero:permission-request`. `correlation_id` is ours -
+/// generated so we can look the pending request back up when the frontend
+/// answers, independent of whatever id shape the JSON-RPC request used.
+fn translate_permission_request(correlation_id: &str, params: &serde_json::Value) -> serde_json::Value {
+    let tool_call = &params["toolCall"];
+    let tool_call_id = tool_call["toolCallId"].as_str().unwrap_or("");
+    let fallback_name = tool_name_from_call_id(tool_call_id);
+    let tool_name = tool_call["title"].as_str().unwrap_or(&fallback_name);
+    let reason = tool_call["rawInput"]["reason"].as_str().unwrap_or("");
+    let options = params.get("options").cloned().unwrap_or(serde_json::json!([]));
+
+    serde_json::json!({
+        "requestId": correlation_id,
+        "toolName": tool_name,
+        "reason": reason,
+        "options": options,
+        "answerable": true,
+    })
+}
+
+fn now_ms_string() -> String {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis().to_string())
+        .unwrap_or_default()
+}
+
+/// Append one entry to the local history log for a session. Best-effort:
+/// failures are logged, not propagated, since a lost history line shouldn't
+/// interrupt a live conversation.
+async fn append_history(path: &Path, event_type: &str, payload: &serde_json::Value) {
+    let entry = serde_json::json!({
+        "type": event_type,
+        "payload": payload,
+        "createdAt": now_ms_string(),
+    });
+    let Ok(mut line) = serde_json::to_string(&entry) else {
+        return;
+    };
+    line.push('\n');
+
+    if let Some(parent) = path.parent() {
+        if let Err(e) = tokio::fs::create_dir_all(parent).await {
+            log::error!("[bridge] failed to create history dir {parent:?}: {e}");
+            return;
+        }
+    }
+
+    match OpenOptions::new().create(true).append(true).open(path).await {
+        Ok(mut file) => {
+            if let Err(e) = file.write_all(line.as_bytes()).await {
+                log::error!("[bridge] failed to append history line: {e}");
+            }
+        }
+        Err(e) => log::error!("[bridge] failed to open history file {path:?}: {e}"),
+    }
+}
+
+/// Flush accumulated `agent_thought_chunk` deltas as one `reasoning` history
+/// entry. Chunks arrive one word (sometimes one token) at a time - persisting
+/// each individually turned history replay into dozens of one-word "thinking"
+/// bubbles instead of the single continuous thought the live UI shows.
+async fn flush_pending_reasoning(path: &Path, pending: &mut String) {
+    if pending.is_empty() {
+        return;
+    }
+    append_history(path, "reasoning", &serde_json::json!({ "content": pending })).await;
+    pending.clear();
+}
+
+/// Flush an accumulated message (user prompt or coalesced assistant reply)
+/// as one `message` history entry - the type `buildMessagesFromHistory` on
+/// the frontend actually renders as a chat bubble. Nothing used to write
+/// this type at all: the assistant's `agent_message_chunk` deltas were
+/// persisted verbatim as `text` events, which `load_session_history`'s type
+/// allowlist doesn't even let through, so replayed sessions showed every
+/// tool call and thought but never the actual reply.
+async fn flush_pending_message(path: &Path, role: &str, pending: &mut String) {
+    if pending.is_empty() {
+        return;
+    }
+    append_history(
+        path,
+        "message",
+        &serde_json::json!({ "role": role, "content": pending }),
+    )
+    .await;
+    pending.clear();
+}
+
+/// Where zero-desktop keeps its own rich session history, separate from
+/// whatever zero's own `~/.local/share/zero/sessions/<id>/events.jsonl`
+/// contains (which, in ACP mode, only records `message` entries - verified
+/// live - not tool calls/reasoning/permission decisions).
+pub fn history_path_for(session_id: &str) -> Result<PathBuf, String> {
+    let base = dirs::data_dir().ok_or_else(|| "Could not resolve app data directory".to_string())?;
+    Ok(base
+        .join("zero-desktop")
+        .join("session-history")
+        .join(format!("{session_id}.jsonl")))
+}
+
+/// zero-desktop's own record of session titles, keyed by session id. Needed
+/// because ACP-created sessions get a generic "ACP session" title from zero
+/// itself with no discovered protocol method to set a better one - so we
+/// track titles ourselves and overlay them onto `zero sessions list` output.
+fn title_map_path() -> Result<PathBuf, String> {
+    let base = dirs::data_dir().ok_or_else(|| "Could not resolve app data directory".to_string())?;
+    Ok(base.join("zero-desktop").join("session-titles.json"))
+}
+
+fn load_title_map() -> HashMap<String, String> {
+    let Ok(path) = title_map_path() else {
+        return HashMap::new();
+    };
+    let Ok(content) = std::fs::read_to_string(&path) else {
+        return HashMap::new();
+    };
+    serde_json::from_str(&content).unwrap_or_default()
+}
+
+fn save_title_map(map: &HashMap<String, String>) -> Result<(), String> {
+    let path = title_map_path()?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let content = serde_json::to_string_pretty(map).map_err(|e| e.to_string())?;
+    std::fs::write(&path, content).map_err(|e| e.to_string())
+}
+
+pub fn get_session_title(session_id: &str) -> Option<String> {
+    load_title_map().get(session_id).cloned()
+}
+
+/// Set (or overwrite) a session's title - used both for the auto-derived
+/// title on a session's first message and for an explicit user rename.
+pub fn set_session_title(session_id: &str, title: &str) -> Result<(), String> {
+    let mut map = load_title_map();
+    map.insert(session_id.to_string(), title.to_string());
+    save_title_map(&map)
+}
+
+pub fn remove_session_title(session_id: &str) -> Result<(), String> {
+    let mut map = load_title_map();
+    if map.remove(session_id).is_some() {
+        save_title_map(&map)?;
+    }
+    Ok(())
+}
+
+/// zero-desktop's own record of which model answered each session, keyed by
+/// session id. Needed because `zero sessions list --json` reports an empty
+/// `modelId` in ACP mode and the ACP protocol itself never surfaces the
+/// model (verified live - neither `session/new`'s result nor any
+/// `session/update` notification carries it) - so we snapshot the active
+/// model from `zero config --json` when the session is created and overlay
+/// it the same way session titles are overlaid.
+fn model_map_path() -> Result<PathBuf, String> {
+    let base = dirs::data_dir().ok_or_else(|| "Could not resolve app data directory".to_string())?;
+    Ok(base.join("zero-desktop").join("session-models.json"))
+}
+
+fn load_model_map() -> HashMap<String, String> {
+    let Ok(path) = model_map_path() else {
+        return HashMap::new();
+    };
+    let Ok(content) = std::fs::read_to_string(&path) else {
+        return HashMap::new();
+    };
+    serde_json::from_str(&content).unwrap_or_default()
+}
+
+fn save_model_map(map: &HashMap<String, String>) -> Result<(), String> {
+    let path = model_map_path()?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let content = serde_json::to_string_pretty(map).map_err(|e| e.to_string())?;
+    std::fs::write(&path, content).map_err(|e| e.to_string())
+}
+
+pub fn get_session_model(session_id: &str) -> Option<String> {
+    load_model_map().get(session_id).cloned()
+}
+
+pub fn set_session_model(session_id: &str, model_id: &str) -> Result<(), String> {
+    let mut map = load_model_map();
+    map.insert(session_id.to_string(), model_id.to_string());
+    save_model_map(&map)
+}
+
+pub fn remove_session_model(session_id: &str) -> Result<(), String> {
+    let mut map = load_model_map();
+    if map.remove(session_id).is_some() {
+        save_model_map(&map)?;
+    }
+    Ok(())
+}
+
+/// Best-effort read of the currently active provider's model via `zero
+/// config --json`. Used to snapshot which model is answering a session at
+/// creation time, since nothing in `zero sessions list` or the ACP protocol
+/// reports it after the fact.
+async fn active_model_id() -> Option<String> {
+    let zero_path = locate_zero().ok()?.path;
+    let output = Command::new(&zero_path)
+        .arg("config")
+        .arg("--json")
+        .output()
+        .await
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    let active_provider = value["activeProvider"].as_str()?;
+    value["providers"]
+        .as_array()?
+        .iter()
+        .find(|p| p["name"].as_str() == Some(active_provider))
+        .and_then(|p| p["model"].as_str())
+        .map(|s| s.to_string())
+}
+
+fn derive_title_from_message(content: &str) -> String {
+    const MAX_CHARS: usize = 60;
+    let cleaned = content.split_whitespace().collect::<Vec<_>>().join(" ");
+    let cleaned = cleaned.trim();
+    if cleaned.is_empty() {
+        return "New session".to_string();
+    }
+    if cleaned.chars().count() > MAX_CHARS {
+        let truncated: String = cleaned.chars().take(MAX_CHARS).collect();
+        format!("{truncated}…")
+    } else {
+        cleaned.to_string()
+    }
+}
+
+/// A permission request from the agent, awaiting the user's decision.
+/// `reply_id` is the original JSON-RPC request id (echoed back verbatim
+/// when we answer it).
+struct PendingPermission {
+    reply_id: serde_json::Value,
+}
+
+/// A live `zero acp` child process plus the peer used to talk to it.
+struct LiveProcess {
+    child: Child,
+    peer: AcpPeer,
+}
+
+/// State for the app's one active zero session. `live` is `None` when the
+/// process has been killed (cancelled, or crashed) but the session is still
+/// logically "current" - the next `send()` respawns it and reattaches via
+/// `session/load`.
+struct AcpSession {
+    cwd: PathBuf,
+    session_id: String,
+    history_path: PathBuf,
+    live: Option<LiveProcess>,
+}
+
+/// Bridge that manages a `zero acp` child process per active session and
+/// forwards translated events to the frontend.
 ///
-/// Each call to `send()` spawns a fresh `zero exec` process with a persistent
-/// stdin writer task. This task writes the initial user message and then
-/// listens on an mpsc channel for permission decisions, forwarding them to
-/// zero's stdin. When the channel sender is dropped (on next `send()` or
-/// `stop()`), the writer task finishes and drops stdin.
-///
-/// The first turn spawns a plain `zero exec`; subsequent turns use
-/// `--resume <sessionId>` so that zero picks up the persisted session and
-/// retains conversation context.
+/// One process per session (not shared across sessions/workspaces): `zero`
+/// has no `session/cancel` method (verified live - "method not found"), so
+/// interrupting a turn means killing the process. A single process shared
+/// across sessions would take every other open conversation down with it,
+/// so each session gets its own.
 pub struct ZeroBridge {
     app: tauri::AppHandle,
-    session: Arc<Mutex<Option<SessionState>>>,
+    session: Arc<Mutex<Option<AcpSession>>>,
+    pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
 }
 
 impl ZeroBridge {
@@ -81,94 +388,46 @@ impl ZeroBridge {
         Self {
             app,
             session: Arc::new(Mutex::new(None)),
+            pending_permissions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
-    pub async fn start(&self, cwd: PathBuf, resume_id: Option<String>) -> Result<(), String> {
-        let mut session = self.session.lock().await;
-        if let Some(ref mut old) = *session {
-            old.permission_tx.take();
-            if let Some(mut child) = old.child.take() {
-                child.kill().await.ok();
-                let _ = child.wait().await;
-            }
-        }
-        let sid = Arc::new(Mutex::new(resume_id));
-        *session = Some(SessionState {
-            cwd,
-            session_id: sid,
-            child: None,
-            permission_tx: None,
-        });
-        Ok(())
-    }
-
-    /// Send a user message to zero.
+    /// Spawn `zero acp`, complete the `initialize` handshake, and open a
+    /// session (`session/load` when `resume_id` is given, falling back to
+    /// `session/new` if that fails; plain `session/new` otherwise). Spawns
+    /// the stdout reader loop and the stderr forwarder. Does not touch
+    /// `self.session` - callers install the result.
     ///
-    /// Spawns a fresh `zero exec` process. Keeps stdin open via a background
-    /// writer task so that permission decisions can be forwarded mid-turn.
-    pub async fn send(&self, event: InputEvent) -> Result<(), String> {
-        let (cwd, session_id_arc, old_child, old_tx) = {
-            let mut session = self.session.lock().await;
-            let s = session
-                .as_mut()
-                .ok_or_else(|| "No active zero session".to_string())?;
-            let old = s.child.take();
-            let tx = s.permission_tx.take();
-            (s.cwd.clone(), s.session_id.clone(), old, tx)
-        };
-
-        drop(old_tx);
-
-        if let Some(mut child) = old_child {
-            child.kill().await.ok();
-            let _ = child.wait().await;
-        }
-
+    /// `known_history_path` is `Some` when the caller already knows which
+    /// session this will be (resuming, or respawning after a cancel) and
+    /// `None` for a genuinely new session, where the real session id (and
+    /// thus the history path) is only known after `session/new` responds.
+    /// The reader task is spawned before that response can possibly arrive
+    /// (it's the only thing that can resolve it), so the path is threaded
+    /// through a shared cell it re-checks per event rather than being
+    /// captured once - a brand new session's early events used to be
+    /// silently written to a shared placeholder file instead of
+    /// `<real-session-id>.jsonl`, which is why history replay is the thing
+    /// to check first if this regresses again.
+    async fn spawn_and_handshake(
+        &self,
+        cwd: &Path,
+        resume_id: Option<&str>,
+        known_history_path: Option<PathBuf>,
+    ) -> Result<(Child, AcpPeer, String), String> {
         let zero_path = locate_zero()
             .map_err(|e| format!("Failed to locate zero CLI: {e}"))?
             .path;
-        log::info!("[bridge] spawning zero exec at {zero_path:?}, cwd={cwd:?}");
 
-        let resume_id = {
-            let id = session_id_arc.lock().await;
-            id.clone()
-        };
-
-        let mut cmd = Command::new(&zero_path);
-        cmd.arg("exec")
-            .arg("--input-format")
-            .arg("stream-json")
-            .arg("--output-format")
-            .arg("stream-json")
-            // zero exec is non-interactive: it can never deliver an actual
-            // permission_request back to the user (stdin is closed before
-            // the turn starts - see the comment below), so at the default
-            // "low" autonomy it silently auto-denies shell/write actions,
-            // failing tool calls with "Sandbox approval required" instead of
-            // asking. Verified directly against the CLI: "medium" is the
-            // level where sandboxed shell commands get auto-allowed instead
-            // of denied ("auto-allowed: sandbox is active for this shell
-            // command"), without going as far as "high", which the CLI's
-            // own help text says "enables unsafe tools". Network access
-            // (web_fetch/curl) still gets denied even at "high" - that one
-            // is a hard limit of this transport, not something a flag fixes.
-            .arg("--auto")
-            .arg("medium")
-            .arg("--cwd")
-            .arg(&cwd);
-        if let Some(ref id) = resume_id {
-            cmd.arg("--resume").arg(id);
-        }
-
-        let mut child = cmd
+        let mut child = Command::new(&zero_path)
+            .arg("acp")
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
-            .map_err(|e| format!("Failed to spawn zero exec: {e}"))?;
+            .map_err(|e| format!("Failed to spawn zero acp: {e}"))?;
 
-        let mut stdin = child
+        let stdin = child
             .stdin
             .take()
             .ok_or_else(|| "Failed to open stdin".to_string())?;
@@ -181,98 +440,358 @@ impl ZeroBridge {
             .take()
             .ok_or_else(|| "Failed to open stderr".to_string())?;
 
-        let initial_line = serde_json::to_string(&event).map_err(|e| e.to_string())?;
-        stdin
-            .write_all(initial_line.as_bytes())
-            .await
-            .map_err(|e| e.to_string())?;
-        stdin
-            .write_all(b"\n")
-            .await
-            .map_err(|e| e.to_string())?;
-        stdin.flush().await.map_err(|e| e.to_string())?;
-        // `zero exec --input-format stream-json` reads stdin to EOF before it starts
-        // acting on any of it - confirmed by testing directly: with stdin held open,
-        // it produces no stdout/stderr/network activity at all, no matter how long you
-        // wait. It only begins the turn once stdin is closed. So we must close it here
-        // rather than keep it open for later writes (e.g. permission decisions - see
-        // send_permission_decision, which is consequently a no-op for now).
-        stdin.shutdown().await.map_err(|e| e.to_string())?;
-        drop(stdin);
+        let peer = AcpPeer::new(stdin);
 
-        let app = self.app.clone();
-        let sid = session_id_arc.clone();
+        let app_stderr = self.app.clone();
         tokio::spawn(async move {
-            let reader = BufReader::new(stdout);
-            let mut lines = reader.lines();
+            let mut lines = BufReader::new(stderr).lines();
             while let Ok(Some(line)) = lines.next_line().await {
-                match serde_json::from_str::<OutputEvent>(&line) {
-                    Ok(event) => {
-                        if event.event_type == "run_start" {
-                            if let Some(id) = event.payload["sessionId"].as_str() {
-                                let mut lock = sid.lock().await;
-                                *lock = Some(id.to_string());
+                let _ = app_stderr.emit("zero:stderr", line);
+            }
+        });
+
+        let history_cell: Arc<Mutex<Option<PathBuf>>> = Arc::new(Mutex::new(known_history_path));
+        self.spawn_stdout_reader(peer.clone(), stdout, history_cell.clone());
+
+        peer.request(
+            "initialize",
+            serde_json::json!({
+                "protocolVersion": 1,
+                "clientCapabilities": { "fs": { "readTextFile": false, "writeTextFile": false } },
+            }),
+        )
+        .await
+        .map_err(|e| format!("ACP initialize failed: {e}"))?;
+
+        let session_id = match resume_id {
+            Some(id) => {
+                match peer
+                    .request("session/load", serde_json::json!({ "sessionId": id }))
+                    .await
+                {
+                    Ok(_) => id.to_string(),
+                    Err(e) => {
+                        log::warn!("[bridge] session/load({id}) failed, starting a new session instead: {e}");
+                        let new_id = self.session_new(&peer, cwd).await?;
+                        *history_cell.lock().await = Some(history_path_for(&new_id)?);
+                        new_id
+                    }
+                }
+            }
+            None => {
+                let new_id = self.session_new(&peer, cwd).await?;
+                *history_cell.lock().await = Some(history_path_for(&new_id)?);
+                new_id
+            }
+        };
+
+        Ok((child, peer, session_id))
+    }
+
+    async fn session_new(&self, peer: &AcpPeer, cwd: &Path) -> Result<String, String> {
+        let result = peer
+            .request(
+                "session/new",
+                serde_json::json!({ "cwd": cwd.to_string_lossy(), "mcpServers": [] }),
+            )
+            .await
+            .map_err(|e| format!("session/new failed: {e}"))?;
+        let session_id = result["sessionId"]
+            .as_str()
+            .map(|s| s.to_string())
+            .ok_or_else(|| "session/new response missing sessionId".to_string())?;
+
+        if let Some(model_id) = active_model_id().await {
+            let _ = set_session_model(&session_id, &model_id);
+        }
+
+        Ok(session_id)
+    }
+
+    /// The only task reading a process's stdout. Resolves responses to our
+    /// own requests, translates `session/update` notifications into
+    /// `zero:event` (also appending them to the local history file), and
+    /// surfaces `session/request_permission` as `zero:permission-request` -
+    /// the part that's actually new: a permission request the frontend can
+    /// answer for real, unlike the old exec transport.
+    ///
+    /// `agent_thought_chunk`/`agent_message_chunk` arrive as many small
+    /// deltas per turn; they're buffered here (`pending_thinking`/
+    /// `pending_text`) and only written to history as one coalesced
+    /// `reasoning`/`message` entry - at whichever of tool-call, permission
+    /// request, or turn end (the `session/prompt` response, identified by a
+    /// `stopReason` field) comes first. Live streaming to the frontend is
+    /// untouched; only what lands in the on-disk history changes.
+    fn spawn_stdout_reader(
+        &self,
+        peer: AcpPeer,
+        stdout: ChildStdout,
+        history_path: Arc<Mutex<Option<PathBuf>>>,
+    ) {
+        let app = self.app.clone();
+        let pending_permissions = self.pending_permissions.clone();
+
+        tokio::spawn(async move {
+            let mut lines = BufReader::new(stdout).lines();
+            let mut pending_thinking = String::new();
+            let mut pending_text = String::new();
+
+            while let Ok(Some(line)) = lines.next_line().await {
+                let Some(msg) = parse_line(&line) else {
+                    log::error!("[bridge] failed to parse acp line: {line}");
+                    let _ = app.emit("zero:stderr", format!("[unparsed] {line}"));
+                    continue;
+                };
+
+                match msg {
+                    AcpMessage::Response { id, result } => {
+                        let is_turn_end = result
+                            .as_ref()
+                            .ok()
+                            .and_then(|v| v.get("stopReason"))
+                            .is_some();
+                        if is_turn_end {
+                            if let Some(path) = history_path.lock().await.clone() {
+                                flush_pending_reasoning(&path, &mut pending_thinking).await;
+                                flush_pending_message(&path, "assistant", &mut pending_text).await;
+                            } else {
+                                pending_thinking.clear();
+                                pending_text.clear();
                             }
                         }
-                        let _ = app.emit("zero:event", event);
+                        peer.resolve_response(id, result).await;
                     }
-                    Err(e) => {
-                        log::error!("[bridge] failed to parse stdout line: {e}: {line}");
-                        let _ = app.emit("zero:stderr", format!("[unparsed] {line}"));
+                    AcpMessage::Notification { method, params } => {
+                        if method != "session/update" {
+                            continue;
+                        }
+                        let kind = params
+                            .get("update")
+                            .and_then(|u| u.get("sessionUpdate"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let event = translate_session_update(&params);
+
+                        match kind.as_str() {
+                            "agent_thought_chunk" => {
+                                if let Some(ref e) = event {
+                                    pending_thinking.push_str(e.payload["delta"].as_str().unwrap_or(""));
+                                }
+                            }
+                            "agent_message_chunk" => {
+                                if let Some(path) = history_path.lock().await.clone() {
+                                    flush_pending_reasoning(&path, &mut pending_thinking).await;
+                                } else {
+                                    pending_thinking.clear();
+                                }
+                                if let Some(ref e) = event {
+                                    pending_text.push_str(e.payload["delta"].as_str().unwrap_or(""));
+                                }
+                            }
+                            "tool_call" | "tool_call_update" => {
+                                if let Some(path) = history_path.lock().await.clone() {
+                                    flush_pending_reasoning(&path, &mut pending_thinking).await;
+                                    if let Some(ref e) = event {
+                                        append_history(&path, &e.event_type, &e.payload).await;
+                                    }
+                                } else {
+                                    pending_thinking.clear();
+                                }
+                            }
+                            _ => {}
+                        }
+
+                        if let Some(event) = event {
+                            let _ = app.emit("zero:event", event);
+                        }
+                    }
+                    AcpMessage::Request { id, method, params } => {
+                        if method != "session/request_permission" {
+                            continue;
+                        }
+                        let correlation_id = format!(
+                            "perm-{}",
+                            SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .map(|d| d.as_nanos())
+                                .unwrap_or_default()
+                        );
+                        pending_permissions
+                            .lock()
+                            .await
+                            .insert(correlation_id.clone(), PendingPermission { reply_id: id });
+                        let payload = translate_permission_request(&correlation_id, &params);
+                        if let Some(path) = history_path.lock().await.clone() {
+                            flush_pending_reasoning(&path, &mut pending_thinking).await;
+                            append_history(&path, "permission_request", &payload).await;
+                        } else {
+                            pending_thinking.clear();
+                        }
+                        let _ = app.emit("zero:permission-request", payload);
                     }
                 }
             }
             let _ = app.emit("zero:process-exited", ());
         });
+    }
 
-        let app = self.app.clone();
-        tokio::spawn(async move {
-            let reader = BufReader::new(stderr);
-            let mut lines = reader.lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                let _ = app.emit("zero:stderr", line);
-            }
-        });
+    async fn kill_live(live: &mut LiveProcess) {
+        live.child.kill().await.ok();
+        let _ = live.child.wait().await;
+    }
 
+    pub async fn start(&self, cwd: PathBuf, resume_id: Option<String>) -> Result<(), String> {
         {
             let mut session = self.session.lock().await;
-            if let Some(ref mut s) = *session {
-                s.permission_tx = None;
-                s.child = Some(child);
+            if let Some(mut old) = session.take() {
+                if let Some(mut live) = old.live.take() {
+                    Self::kill_live(&mut live).await;
+                }
             }
         }
+
+        let known_history_path = match resume_id.as_deref() {
+            Some(id) => Some(history_path_for(id)?),
+            None => None,
+        };
+        let (child, peer, session_id) = self
+            .spawn_and_handshake(&cwd, resume_id.as_deref(), known_history_path)
+            .await?;
+        let history_path = history_path_for(&session_id)?;
+
+        let mut session = self.session.lock().await;
+        *session = Some(AcpSession {
+            cwd,
+            session_id,
+            history_path,
+            live: Some(LiveProcess { child, peer }),
+        });
 
         Ok(())
     }
 
-    /// Forward a permission decision back to zero.
-    ///
-    /// Not currently supported: `zero exec` reads stdin to EOF before acting on
-    /// anything, and we close stdin right after the initial message so the turn
-    /// actually runs (see `send()`). There is no channel left to deliver a
-    /// mid-run decision through. Approving/denying in the UI updates local
-    /// state but zero never sees the decision.
-    pub async fn send_permission_decision(
-        &self,
-        _permission_id: String,
-        _decision: String,
-    ) -> Result<(), String> {
-        Err("Permission decisions are not supported: zero exec closes stdin after \
-             the initial message, so there is no way to deliver a decision mid-run."
-            .to_string())
+    /// Ensure the current session has a live process, respawning (and
+    /// `session/load`-ing) if it was killed by `cancel()` or died on its
+    /// own. Returns the peer, session id, and history path to use for the
+    /// next request.
+    async fn ensure_live(&self) -> Result<(AcpPeer, String, PathBuf), String> {
+        let (cwd, session_id, history_path, needs_respawn) = {
+            let session = self.session.lock().await;
+            let s = session
+                .as_ref()
+                .ok_or_else(|| "No active zero session".to_string())?;
+            (
+                s.cwd.clone(),
+                s.session_id.clone(),
+                s.history_path.clone(),
+                s.live.is_none(),
+            )
+        };
+
+        if needs_respawn {
+            let (child, peer, resumed_id) = self
+                .spawn_and_handshake(&cwd, Some(&session_id), Some(history_path))
+                .await?;
+            let mut session = self.session.lock().await;
+            if let Some(ref mut s) = *session {
+                s.session_id = resumed_id;
+                s.live = Some(LiveProcess { child, peer });
+            }
+        }
+
+        let session = self.session.lock().await;
+        let s = session
+            .as_ref()
+            .ok_or_else(|| "No active zero session".to_string())?;
+        let live = s
+            .live
+            .as_ref()
+            .ok_or_else(|| "Failed to reconnect to zero session".to_string())?;
+        Ok((live.peer.clone(), s.session_id.clone(), s.history_path.clone()))
     }
 
-    /// Cancel the in-flight turn without tearing down the session: kills the
-    /// child process (if any) but keeps `cwd`/`session_id` intact so the next
-    /// `send()` can still `--resume` the same zero session. Unlike `stop()`,
-    /// which is used when switching workspaces/sessions entirely.
+    /// Send a user message. Fires `session/prompt` in the background (it
+    /// only resolves once the whole turn ends) and returns immediately -
+    /// progress is tracked via `zero:event`/`zero:permission-request`, same
+    /// as the app already expects.
+    pub async fn send(&self, content: String) -> Result<(), String> {
+        let (peer, session_id, history_path) = self.ensure_live().await?;
+
+        // First message of a session (no title recorded yet) gives it a
+        // real name instead of zero's generic "ACP session" default - there
+        // is no discovered ACP method to set the title on zero's side, so
+        // zero-desktop tracks it locally and overlays it in list_zero_sessions.
+        if get_session_title(&session_id).is_none() {
+            let _ = set_session_title(&session_id, &derive_title_from_message(&content));
+        }
+
+        // The user's own turn was never persisted before - only the agent's
+        // side went through `spawn_stdout_reader`. Without this, replaying a
+        // session's history showed the agent's tool calls/reasoning with no
+        // record of what was actually asked.
+        append_history(
+            &history_path,
+            "message",
+            &serde_json::json!({ "role": "user", "content": content.clone() }),
+        )
+        .await;
+
+        let app = self.app.clone();
+        tokio::spawn(async move {
+            let result = peer
+                .request(
+                    "session/prompt",
+                    serde_json::json!({
+                        "sessionId": session_id,
+                        "prompt": [{ "type": "text", "text": content }],
+                    }),
+                )
+                .await;
+
+            let event = match result {
+                Ok(value) => OutputEvent::new(
+                    "run_end",
+                    serde_json::json!({
+                        "status": "success",
+                        "stopReason": value.get("stopReason").cloned().unwrap_or(serde_json::Value::Null),
+                    }),
+                ),
+                Err(e) => OutputEvent::new("error", serde_json::json!({ "message": e })),
+            };
+            let _ = app.emit("zero:event", event);
+        });
+
+        Ok(())
+    }
+
+    /// Answer a pending `session/request_permission` request from the
+    /// agent. This is the actual payoff of the ACP migration: unlike the old
+    /// `zero exec` transport, this reply really reaches the agent.
+    pub async fn respond_to_permission(&self, request_id: String, option_id: String) -> Result<(), String> {
+        let pending = self
+            .pending_permissions
+            .lock()
+            .await
+            .remove(&request_id)
+            .ok_or_else(|| format!("No pending permission request with id {request_id}"))?;
+
+        let (peer, _, _) = self.ensure_live().await?;
+        peer.respond(
+            pending.reply_id,
+            serde_json::json!({ "outcome": { "outcome": "selected", "optionId": option_id } }),
+        )
+        .await
+    }
+
+    /// Cancel the in-flight turn. `zero` has no `session/cancel` method, so
+    /// this kills the process outright; the session record (cwd/session_id)
+    /// is kept so the next `send()` respawns and `session/load`s back in.
     pub async fn cancel(&self) -> Result<(), String> {
         let mut session = self.session.lock().await;
         if let Some(ref mut s) = *session {
-            drop(s.permission_tx.take());
-            if let Some(mut child) = s.child.take() {
-                child.kill().await.ok();
-                let _ = child.wait().await;
+            if let Some(mut live) = s.live.take() {
+                Self::kill_live(&mut live).await;
             }
         }
         Ok(())
@@ -281,10 +800,8 @@ impl ZeroBridge {
     pub async fn stop(&self) -> Result<(), String> {
         let mut session = self.session.lock().await;
         if let Some(mut s) = session.take() {
-            drop(s.permission_tx.take());
-            if let Some(ref mut child) = s.child {
-                child.kill().await.ok();
-                let _ = child.wait().await;
+            if let Some(mut live) = s.live.take() {
+                Self::kill_live(&mut live).await;
             }
         }
         Ok(())
@@ -296,136 +813,120 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_input_event_user_message_serialization() {
-        let event = InputEvent::user_message("Hello, zero!".to_string());
-        let json = serde_json::to_string(&event).unwrap();
-
-        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed["schemaVersion"], 2);
-        assert_eq!(parsed["type"], "message");
-        assert_eq!(parsed["role"], "user");
-        assert_eq!(parsed["content"], "Hello, zero!");
+    fn test_tool_name_from_call_id_strips_counter() {
+        assert_eq!(tool_name_from_call_id("read_file_0"), "read_file");
+        assert_eq!(tool_name_from_call_id("list_directory_12"), "list_directory");
+        assert_eq!(tool_name_from_call_id("mcp_firecrawl_scrape_3"), "mcp_firecrawl_scrape");
     }
 
     #[test]
-    fn test_output_event_run_start_deserialization() {
-        let json = r#"{"schemaVersion":2,"type":"run_start","sessionId":"abc-123","cwd":"/tmp/test","model":"test-model"}"#;
-
-        let event: OutputEvent = serde_json::from_str(json).unwrap();
-        assert_eq!(event.schema_version, 2);
-        assert_eq!(event.event_type, "run_start");
-
-        let payload = event.payload.as_object().unwrap();
-        assert_eq!(payload["sessionId"], "abc-123");
-        assert_eq!(payload["cwd"], "/tmp/test");
-        assert_eq!(payload["model"], "test-model");
+    fn test_tool_name_from_call_id_no_counter_suffix() {
+        assert_eq!(tool_name_from_call_id("request_permissions"), "request_permissions");
     }
 
     #[test]
-    fn test_output_event_text_deserialization() {
-        let json = r#"{"schemaVersion":2,"type":"text","delta":"Hello"}"#;
-
-        let event: OutputEvent = serde_json::from_str(json).unwrap();
-        assert_eq!(event.schema_version, 2);
+    fn test_translate_agent_message_chunk() {
+        let params = serde_json::json!({
+            "sessionId": "s1",
+            "update": { "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": "hi" } }
+        });
+        let event = translate_session_update(&params).unwrap();
         assert_eq!(event.event_type, "text");
-        assert_eq!(event.payload["delta"], "Hello");
+        assert_eq!(event.payload["delta"], "hi");
     }
 
     #[test]
-    fn test_output_event_final_deserialization() {
-        let json = r#"{"schemaVersion":2,"type":"final","content":"Hello, world!"}"#;
-
-        let event: OutputEvent = serde_json::from_str(json).unwrap();
-        assert_eq!(event.event_type, "final");
-        assert_eq!(event.payload["content"], "Hello, world!");
+    fn test_translate_agent_thought_chunk() {
+        let params = serde_json::json!({
+            "update": { "sessionUpdate": "agent_thought_chunk", "content": { "type": "text", "text": "thinking..." } }
+        });
+        let event = translate_session_update(&params).unwrap();
+        assert_eq!(event.event_type, "reasoning");
+        assert_eq!(event.payload["delta"], "thinking...");
     }
 
     #[test]
-    fn test_output_event_run_end_deserialization() {
-        let json = r#"{"schemaVersion":2,"type":"run_end","status":"completed"}"#;
-
-        let event: OutputEvent = serde_json::from_str(json).unwrap();
-        assert_eq!(event.event_type, "run_end");
-        assert_eq!(event.payload["status"], "completed");
-    }
-
-    #[test]
-    fn test_output_event_error_deserialization() {
-        let json = r#"{"schemaVersion":2,"type":"error","message":"something went wrong"}"#;
-
-        let event: OutputEvent = serde_json::from_str(json).unwrap();
-        assert_eq!(event.event_type, "error");
-        assert_eq!(event.payload["message"], "something went wrong");
-    }
-
-    #[test]
-    fn test_output_event_tool_call_deserialization() {
-        let json = r#"{"schemaVersion":2,"type":"tool_call","toolName":"read","toolUseId":"tu-1","input":{"filePath":"/tmp/test.txt"}}"#;
-
-        let event: OutputEvent = serde_json::from_str(json).unwrap();
+    fn test_translate_tool_call() {
+        let params = serde_json::json!({
+            "update": {
+                "sessionUpdate": "tool_call",
+                "toolCallId": "read_file_0",
+                "title": "read_file note.txt",
+                "kind": "read",
+                "status": "in_progress",
+                "rawInput": { "path": "note.txt" }
+            }
+        });
+        let event = translate_session_update(&params).unwrap();
         assert_eq!(event.event_type, "tool_call");
-        assert_eq!(event.payload["toolName"], "read");
-        assert_eq!(event.payload["toolUseId"], "tu-1");
-        assert_eq!(event.payload["input"]["filePath"], "/tmp/test.txt");
+        assert_eq!(event.payload["id"], "read_file_0");
+        assert_eq!(event.payload["name"], "read_file");
+        assert_eq!(event.payload["args"]["path"], "note.txt");
     }
 
     #[test]
-    fn test_output_event_tool_result_deserialization() {
-        let json = r#"{"schemaVersion":2,"type":"tool_result","toolUseId":"tu-1","content":"file contents here"}"#;
-
-        let event: OutputEvent = serde_json::from_str(json).unwrap();
+    fn test_translate_tool_call_update_success() {
+        let params = serde_json::json!({
+            "update": {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "read_file_0",
+                "status": "completed",
+                "content": [{ "type": "content", "content": { "type": "text", "text": "file contents" } }]
+            }
+        });
+        let event = translate_session_update(&params).unwrap();
         assert_eq!(event.event_type, "tool_result");
-        assert_eq!(event.payload["toolUseId"], "tu-1");
-        assert_eq!(event.payload["content"], "file contents here");
+        assert_eq!(event.payload["status"], "ok");
+        assert_eq!(event.payload["output"], "file contents");
     }
 
     #[test]
-    fn test_input_event_permission_decision_serialization() {
-        let event = InputEvent::PermissionDecision {
-            schema_version: 2,
-            permission_id: "p-1".to_string(),
-            decision: "approved".to_string(),
-        };
-        let json = serde_json::to_string(&event).unwrap();
-
-        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed["schemaVersion"], 2);
-        assert_eq!(parsed["type"], "permission_decision");
-        assert_eq!(parsed["permissionId"], "p-1");
-        assert_eq!(parsed["decision"], "approved");
+    fn test_translate_tool_call_update_failure() {
+        let params = serde_json::json!({
+            "update": {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "web_fetch_0",
+                "status": "failed",
+                "content": [{ "type": "content", "content": { "type": "text", "text": "network denied" } }]
+            }
+        });
+        let event = translate_session_update(&params).unwrap();
+        assert_eq!(event.payload["status"], "error");
+        assert_eq!(event.payload["output"], "network denied");
     }
 
     #[test]
-    fn test_output_event_permission_request_deserialization() {
-        let json = r#"{"schemaVersion":2,"type":"permission_request","permissionId":"p-1","toolName":"bash","proposedCommand":"rm -rf /"}"#;
-
-        let event: OutputEvent = serde_json::from_str(json).unwrap();
-        assert_eq!(event.event_type, "permission_request");
-        assert_eq!(event.payload["permissionId"], "p-1");
-        assert_eq!(event.payload["toolName"], "bash");
-        assert_eq!(event.payload["proposedCommand"], "rm -rf /");
+    fn test_translate_unknown_update_kind_ignored() {
+        let params = serde_json::json!({ "update": { "sessionUpdate": "plan" } });
+        assert!(translate_session_update(&params).is_none());
     }
 
     #[test]
-    fn test_output_event_unknown_fields_ignored() {
-        let json = r#"{"schemaVersion":2,"type":"text","delta":"test","extra_field":42,"another_extra":"ignored"}"#;
-
-        let event: OutputEvent = serde_json::from_str(json).unwrap();
-        assert_eq!(event.event_type, "text");
-        assert_eq!(event.payload["delta"], "test");
+    fn test_translate_permission_request() {
+        let params = serde_json::json!({
+            "sessionId": "s1",
+            "toolCall": {
+                "toolCallId": "request_permissions_1",
+                "title": "request_permissions",
+                "rawInput": { "reason": "Need write permission." }
+            },
+            "options": [
+                { "optionId": "allow", "name": "Allow", "kind": "allow_once" },
+                { "optionId": "reject_once", "name": "Reject", "kind": "reject_once" }
+            ]
+        });
+        let payload = translate_permission_request("corr-1", &params);
+        assert_eq!(payload["requestId"], "corr-1");
+        assert_eq!(payload["toolName"], "request_permissions");
+        assert_eq!(payload["reason"], "Need write permission.");
+        assert_eq!(payload["options"].as_array().unwrap().len(), 2);
     }
 
     #[test]
     fn test_output_event_serialize_roundtrip() {
-        let original = OutputEvent {
-            schema_version: 2,
-            event_type: "text".to_string(),
-            payload: serde_json::json!({"delta": "hello"}),
-        };
-
+        let original = OutputEvent::new("text", serde_json::json!({ "delta": "hello" }));
         let json = serde_json::to_string(&original).unwrap();
         let parsed: OutputEvent = serde_json::from_str(&json).unwrap();
-
         assert_eq!(parsed.schema_version, original.schema_version);
         assert_eq!(parsed.event_type, original.event_type);
         assert_eq!(parsed.payload["delta"], original.payload["delta"]);
