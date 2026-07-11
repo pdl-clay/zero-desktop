@@ -5,6 +5,7 @@ import {
   startZeroSession,
   sendZeroMessage,
   stopZeroSession,
+  cancelZeroRun,
   onZeroEvent,
   onZeroStderr,
   onZeroProcessExited,
@@ -42,6 +43,7 @@ export const useZeroStore = defineStore("zero", {
     isLoadingSession: false,
     lastStderrLines: [],
     currentPlan: [],
+    _cancelledByUser: false,
     _sessionSyncTimer: null,
     _lastEventCount: 0,
   }),
@@ -136,6 +138,17 @@ export const useZeroStore = defineStore("zero", {
       } catch (error) {
         this.zeroError = error;
         this.runInProgress = false;
+      }
+    },
+
+    async cancelRun() {
+      if (!this.runInProgress) return;
+      this._cancelledByUser = true;
+      try {
+        await cancelZeroRun();
+      } catch (error) {
+        this._cancelledByUser = false;
+        this.zeroError = error;
       }
     },
 
@@ -414,20 +427,33 @@ export const useZeroStore = defineStore("zero", {
       if (!this.runInProgress) return;
 
       this.finalizeThinking();
-      const tail = this.lastStderrLines.slice(-5).join("\n");
-      const content = tail
-        ? `${i18n.global.t("chat.connectionLost")}\n${tail}`
-        : i18n.global.t("chat.connectionLost");
 
-      this.messages.push({
-        id: nextId(),
-        type: "error",
-        content,
-        timestamp: Date.now(),
-      });
+      if (this._cancelledByUser) {
+        this._cancelledByUser = false;
+      } else {
+        const tail = this.lastStderrLines.slice(-5).join("\n");
+        const content = tail
+          ? `${i18n.global.t("chat.connectionLost")}\n${tail}`
+          : i18n.global.t("chat.connectionLost");
+
+        this.messages.push({
+          id: nextId(),
+          type: "error",
+          content,
+          timestamp: Date.now(),
+        });
+      }
+
+      for (const msg of this.messages) {
+        if (msg.type === "tool_call" && msg.status === "running") {
+          msg.status = "error";
+          msg.result = i18n.global.t("chat.cancelled");
+        }
+      }
 
       this.currentResponse = "";
       this.currentThinking = "";
+      this.currentPlan = [];
       this.runInProgress = false;
     },
 
@@ -537,6 +563,19 @@ export const useZeroStore = defineStore("zero", {
     },
 
     addToolCall(event) {
+      // update_plan replaces the whole plan each call - track the latest one
+      // separately so it can be pinned above the input (see activePlan)
+      // instead of also rendering a tool-call card for it in the message
+      // history, which would just duplicate what the input already shows.
+      // Reused for both live events and history replay since both funnel
+      // through this same method.
+      if (event.name === "update_plan") {
+        if (Array.isArray(event.args?.plan)) {
+          this.currentPlan = event.args.plan;
+        }
+        return;
+      }
+
       this.messages.push({
         id: nextId(),
         type: "tool_call",
@@ -547,14 +586,6 @@ export const useZeroStore = defineStore("zero", {
         result: null,
         timestamp: Date.now(),
       });
-
-      // update_plan replaces the whole plan each call - track the latest one
-      // separately so it can be pinned above the input (see activePlan).
-      // Reused for both live events and history replay since both funnel
-      // through this same method.
-      if (event.name === "update_plan" && Array.isArray(event.args?.plan)) {
-        this.currentPlan = event.args.plan;
-      }
     },
 
     updateToolCallResult(event) {

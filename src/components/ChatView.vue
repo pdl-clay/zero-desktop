@@ -114,13 +114,14 @@
         :working-status="zeroStore.workingStatus"
         :plan="zeroStore.activePlan"
         @send="onSend"
+        @cancel="zeroStore.cancelRun()"
       />
     </div>
   </q-page>
 </template>
 
 <script setup>
-import { ref, computed, watch, nextTick } from "vue";
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from "vue";
 import { useQuasar } from "quasar";
 import { useZeroStore } from "@/stores/zero-store";
 import { renderMarkdown } from "@/utils/markdown";
@@ -223,6 +224,16 @@ async function onSend(content) {
   input.value = "";
   await zeroStore.sendMessage(content);
 }
+
+function onKeydown(event) {
+  if (event.key === "Escape" && zeroStore.runInProgress) {
+    event.preventDefault();
+    zeroStore.cancelRun();
+  }
+}
+
+onMounted(() => window.addEventListener("keydown", onKeydown));
+onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 </script>
 
 <style scoped>

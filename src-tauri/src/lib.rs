@@ -160,6 +160,11 @@ async fn stop_zero_session(state: tauri::State<'_, Arc<ZeroBridge>>) -> Result<(
 }
 
 #[tauri::command]
+async fn cancel_zero_run(state: tauri::State<'_, Arc<ZeroBridge>>) -> Result<(), String> {
+    state.cancel().await
+}
+
+#[tauri::command]
 async fn send_permission_decision(
     state: tauri::State<'_, Arc<ZeroBridge>>,
     permission_id: String,
@@ -194,6 +199,7 @@ pub fn run() {
             send_zero_message,
             send_permission_decision,
             stop_zero_session,
+            cancel_zero_run,
             list_zero_sessions,
             load_session_history,
             delete_session

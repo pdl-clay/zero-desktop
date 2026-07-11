@@ -34,6 +34,14 @@ export async function stopZeroSession() {
 }
 
 /**
+ * Cancel the in-flight turn without tearing down the session, so the next
+ * message can still resume the same zero session.
+ */
+export async function cancelZeroRun() {
+  return invoke("cancel_zero_run");
+}
+
+/**
  * Listen for zero stream-json events.
  * @param {(event: { event: string, payload: any }) => void} callback
  * @returns {Promise<() => void>}

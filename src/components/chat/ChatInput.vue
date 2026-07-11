@@ -42,12 +42,16 @@
       <button
         type="button"
         class="chat-input__send"
-        :class="{ 'chat-input__send--active': canSubmit }"
-        :disabled="!canSubmit"
-        @click="submit"
+        :class="{
+          'chat-input__send--active': canSubmit && !loading,
+          'chat-input__send--cancel': loading,
+        }"
+        :disabled="!loading && !canSubmit"
+        @click="loading ? onCancel() : submit()"
       >
-        <q-spinner-dots v-if="loading" size="16px" color="white" />
+        <q-icon v-if="loading" name="pause" size="18px" />
         <q-icon v-else name="arrow_upward" size="20px" />
+        <q-tooltip v-if="loading">{{ t("chat.cancelRun") }}</q-tooltip>
       </button>
     </div>
   </div>
@@ -68,7 +72,7 @@ const props = defineProps({
   plan: { type: Array, default: null },
 });
 
-const emit = defineEmits(["update:modelValue", "send"]);
+const emit = defineEmits(["update:modelValue", "send", "cancel"]);
 
 const $q = useQuasar();
 const { t } = useI18n();
@@ -128,6 +132,10 @@ function submit() {
   if (!canSubmit.value) return;
   emit("send", props.modelValue.trim());
   nextTick(autoResize);
+}
+
+function onCancel() {
+  emit("cancel");
 }
 
 defineExpose({ focus: () => textareaRef.value?.focus() });
@@ -301,7 +309,7 @@ defineExpose({ focus: () => textareaRef.value?.focus() });
   background: rgba(255, 255, 255, 0.07);
 }
 
-.chat-input--disabled {
+.chat-input--disabled .chat-input__textarea {
   opacity: 0.6;
 }
 
@@ -357,5 +365,20 @@ defineExpose({ focus: () => textareaRef.value?.focus() });
 
 .chat-input__send:disabled {
   cursor: not-allowed;
+}
+
+.chat-input__send--cancel {
+  background: rgba(244, 67, 54, 0.16);
+  color: #f44336;
+  cursor: pointer;
+}
+
+.chat-input__send--cancel:hover {
+  background: rgba(244, 67, 54, 0.26);
+  transform: scale(1.06);
+}
+
+.chat-input__send--cancel:active {
+  transform: scale(0.94);
 }
 </style>

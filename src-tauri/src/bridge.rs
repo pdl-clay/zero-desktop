@@ -141,6 +141,20 @@ impl ZeroBridge {
             .arg("stream-json")
             .arg("--output-format")
             .arg("stream-json")
+            // zero exec is non-interactive: it can never deliver an actual
+            // permission_request back to the user (stdin is closed before
+            // the turn starts - see the comment below), so at the default
+            // "low" autonomy it silently auto-denies shell/write actions,
+            // failing tool calls with "Sandbox approval required" instead of
+            // asking. Verified directly against the CLI: "medium" is the
+            // level where sandboxed shell commands get auto-allowed instead
+            // of denied ("auto-allowed: sandbox is active for this shell
+            // command"), without going as far as "high", which the CLI's
+            // own help text says "enables unsafe tools". Network access
+            // (web_fetch/curl) still gets denied even at "high" - that one
+            // is a hard limit of this transport, not something a flag fixes.
+            .arg("--auto")
+            .arg("medium")
             .arg("--cwd")
             .arg(&cwd);
         if let Some(ref id) = resume_id {
@@ -246,6 +260,22 @@ impl ZeroBridge {
         Err("Permission decisions are not supported: zero exec closes stdin after \
              the initial message, so there is no way to deliver a decision mid-run."
             .to_string())
+    }
+
+    /// Cancel the in-flight turn without tearing down the session: kills the
+    /// child process (if any) but keeps `cwd`/`session_id` intact so the next
+    /// `send()` can still `--resume` the same zero session. Unlike `stop()`,
+    /// which is used when switching workspaces/sessions entirely.
+    pub async fn cancel(&self) -> Result<(), String> {
+        let mut session = self.session.lock().await;
+        if let Some(ref mut s) = *session {
+            drop(s.permission_tx.take());
+            if let Some(mut child) = s.child.take() {
+                child.kill().await.ok();
+                let _ = child.wait().await;
+            }
+        }
+        Ok(())
     }
 
     pub async fn stop(&self) -> Result<(), String> {

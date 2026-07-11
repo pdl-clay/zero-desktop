@@ -49,6 +49,8 @@ export default {
     deny: "Recusar",
     sending: "Enviando...",
     connectionLost: "Conexão com o zero perdida — o processo terminou inesperadamente.",
+    cancelled: "Cancelado",
+    cancelRun: "Cancelar (Esc)",
   },
   common: {
     cancel: "Cancelar",
