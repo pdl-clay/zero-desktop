@@ -8,6 +8,20 @@
       statusClass,
     ]"
   >
+    <div v-if="plan && plan.length > 0" class="chat-input__plan">
+      <div v-for="(item, i) in plan" :key="i" class="chat-input__plan-item row items-start">
+        <q-icon
+          :name="planIcon(item.status)"
+          :color="planColor(item.status)"
+          size="14px"
+          class="q-mr-xs q-mt-xs"
+        />
+        <span :class="['chat-input__plan-text', item.status === 'completed' ? 'chat-input__plan-text--done' : '']">
+          {{ item.content }}
+        </span>
+      </div>
+    </div>
+
     <div v-if="statusLabel" class="chat-input__status">
       <span class="chat-input__status-dot" />
       <span class="chat-input__status-label">{{ statusLabel }}</span>
@@ -43,6 +57,7 @@
 import { ref, computed, nextTick, watch } from "vue";
 import { useQuasar } from "quasar";
 import { useI18n } from "vue-i18n";
+import { planIcon, planColor } from "@/utils/plan";
 
 const props = defineProps({
   modelValue: { type: String, default: "" },
@@ -50,6 +65,7 @@ const props = defineProps({
   disabled: { type: Boolean, default: false },
   loading: { type: Boolean, default: false },
   workingStatus: { type: [Object, String], default: null },
+  plan: { type: Array, default: null },
 });
 
 const emit = defineEmits(["update:modelValue", "send"]);
@@ -135,6 +151,28 @@ defineExpose({ focus: () => textareaRef.value?.focus() });
   align-items: flex-end;
   gap: 8px;
   padding: 6px 6px 6px 16px;
+}
+
+.chat-input__plan {
+  padding: 8px 16px 4px;
+  border-bottom: 1px solid var(--chat-card-border);
+  max-height: 140px;
+  overflow-y: auto;
+}
+
+.chat-input__plan-item {
+  padding: 2px 0;
+}
+
+.chat-input__plan-text {
+  font-size: 0.82em;
+  line-height: 1.4;
+  color: var(--chat-text);
+}
+
+.chat-input__plan-text--done {
+  color: var(--chat-text-muted);
+  text-decoration: line-through;
 }
 
 .chat-input__status {

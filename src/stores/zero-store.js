@@ -41,6 +41,7 @@ export const useZeroStore = defineStore("zero", {
     runInProgress: false,
     isLoadingSession: false,
     lastStderrLines: [],
+    currentPlan: [],
     _sessionSyncTimer: null,
     _lastEventCount: 0,
   }),
@@ -57,6 +58,16 @@ export const useZeroStore = defineStore("zero", {
       if (state.currentResponse) return "writing";
       if (state.runInProgress) return "sending";
       return null;
+    },
+
+    // update_plan calls replace the whole plan each time, so the latest one
+    // is the current state of the todo list. Hide it once every item is
+    // checked off instead of leaving a stale "all done" list pinned above
+    // the input.
+    activePlan(state) {
+      if (!state.currentPlan || state.currentPlan.length === 0) return null;
+      const allDone = state.currentPlan.every((item) => item.status === "completed");
+      return allDone ? null : state.currentPlan;
     },
   },
 
@@ -93,6 +104,7 @@ export const useZeroStore = defineStore("zero", {
       this.zeroError = null;
       this.runInProgress = false;
       this.lastStderrLines = [];
+      this.currentPlan = [];
       this._lastEventCount = 0;
 
       try {
@@ -154,6 +166,7 @@ export const useZeroStore = defineStore("zero", {
       this.messages = [];
       this.currentResponse = "";
       this.currentThinking = "";
+      this.currentPlan = [];
       this._lastEventCount = 0;
       this.isLoadingSession = true;
 
@@ -534,6 +547,14 @@ export const useZeroStore = defineStore("zero", {
         result: null,
         timestamp: Date.now(),
       });
+
+      // update_plan replaces the whole plan each call - track the latest one
+      // separately so it can be pinned above the input (see activePlan).
+      // Reused for both live events and history replay since both funnel
+      // through this same method.
+      if (event.name === "update_plan" && Array.isArray(event.args?.plan)) {
+        this.currentPlan = event.args.plan;
+      }
     },
 
     updateToolCallResult(event) {

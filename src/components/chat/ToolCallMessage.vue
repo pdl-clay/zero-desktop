@@ -1,61 +1,89 @@
 <template>
   <div :class="['tool-call-card q-mb-sm', cardClass]">
-    <!-- Running state -->
-    <div v-if="message.status === 'running'" class="row items-center q-px-sm q-py-xs">
-      <q-spinner-dots size="14px" color="info" class="q-mr-sm" />
+    <div class="row items-center q-px-sm q-py-xs">
+      <q-spinner-dots v-if="message.status === 'running'" size="14px" color="info" class="q-mr-sm" />
+      <q-icon
+        v-else
+        :name="isError ? 'error' : 'check_circle'"
+        size="14px"
+        :color="isError ? 'negative' : 'positive'"
+        class="q-mr-xs"
+      />
       <q-icon :name="toolIcon" size="14px" color="info" class="q-mr-xs" />
-      <span class="text-caption text-weight-medium">{{ message.toolName }}</span>
-      <span class="text-caption text-grey-6 q-ml-xs">{{ $t("chat.toolRunning") }}</span>
-      <q-tooltip v-if="inputSummary" max-width="400px" anchor="bottom left" self="top left">
+      <span class="text-caption text-weight-medium tool-name">{{ message.toolName }}</span>
+      <span class="text-caption text-grey-6 q-ml-xs">{{ statusLabel }}</span>
+      <q-tooltip
+        v-if="message.status === 'running' && !editPreview && !planItems && inputSummary"
+        max-width="400px"
+        anchor="bottom left"
+        self="top left"
+      >
         <pre class="tool-input-preview">{{ inputSummary }}</pre>
       </q-tooltip>
+      <q-space />
+      <q-btn
+        v-if="isDone && message.result && !editPreview && !planItems"
+        round
+        dense
+        flat
+        size="xs"
+        :icon="showResult ? 'expand_less' : 'expand_more'"
+        color="grey-5"
+        @click="showResult = !showResult"
+      >
+        <q-tooltip>{{ showResult ? $t("chat.showLess") : $t("chat.showMore") }}</q-tooltip>
+      </q-btn>
+      <q-btn
+        v-if="isDone && message.result"
+        round
+        dense
+        flat
+        size="xs"
+        icon="content_copy"
+        color="grey-5"
+        @click="onCopy"
+      >
+        <q-tooltip>{{ $t("chat.copy") }}</q-tooltip>
+      </q-btn>
     </div>
 
-    <!-- Completed / error state -->
-    <div v-else-if="isDone" class="tool-call-completed">
-      <div class="row items-center q-px-sm q-py-xs">
+    <!-- edit_file / write_file: show the actual change, not just "success" -->
+    <div v-if="editPreview" class="tool-diff q-px-sm q-pb-sm">
+      <div v-if="editPreview.path" class="tool-diff-path text-caption">{{ editPreview.path }}</div>
+      <pre class="tool-diff-block"><span
+          v-for="(line, i) in editPreview.lines"
+          :key="i"
+          :class="'tool-diff-line--' + line.type"
+          >{{ line.text }}</span
+        ></pre>
+      <div v-if="isError && message.result" class="tool-diff-error text-caption q-mt-xs">
+        {{ cleanHookOutput(message.result) }}
+      </div>
+    </div>
+
+    <!-- update_plan: render as a checklist instead of a JSON/text dump -->
+    <div v-else-if="planItems" class="tool-plan q-px-sm q-pb-sm">
+      <div v-for="(item, i) in planItems" :key="i" class="tool-plan-item row items-start q-mb-xs">
         <q-icon
-          :name="isError ? 'error' : 'check_circle'"
-          size="14px"
-          :color="isError ? 'negative' : 'positive'"
-          class="q-mr-xs"
+          :name="planIcon(item.status)"
+          :color="planColor(item.status)"
+          size="16px"
+          class="q-mr-xs q-mt-xs"
         />
-        <q-icon :name="toolIcon" size="14px" color="info" class="q-mr-xs" />
-        <span class="text-caption text-weight-medium tool-name">{{ message.toolName }}</span>
-        <span class="text-caption text-grey-6 q-ml-xs">{{
-          isError ? $t("chat.toolFailed") : $t("chat.toolCompleted")
-        }}</span>
-        <q-space />
-        <q-btn
-          v-if="message.result"
-          round
-          dense
-          flat
-          size="xs"
-          :icon="showResult ? 'expand_less' : 'expand_more'"
-          color="grey-5"
-          @click="showResult = !showResult"
-        >
-          <q-tooltip>{{ showResult ? $t("chat.showLess") : $t("chat.showMore") }}</q-tooltip>
-        </q-btn>
-        <q-btn
-          v-if="message.result"
-          round
-          dense
-          flat
-          size="xs"
-          icon="content_copy"
-          color="grey-5"
-          @click="onCopy"
-        >
-          <q-tooltip>{{ $t("chat.copy") }}</q-tooltip>
-        </q-btn>
+        <div>
+          <div :class="['text-body2', item.status === 'completed' ? 'tool-plan-done' : '']">
+            {{ item.content }}
+          </div>
+          <div v-if="item.notes" class="text-caption tool-plan-notes">{{ item.notes }}</div>
+        </div>
       </div>
-      <div v-if="showResult && message.result" class="tool-result-body q-px-sm q-pb-sm">
-        <pre :class="['tool-result-content', isError ? 'tool-result-content--error' : '']">{{
-          truncatedResult
-        }}</pre>
-      </div>
+    </div>
+
+    <!-- everything else: generic collapsible text result -->
+    <div v-else-if="showResult && message.result" class="tool-result-body q-px-sm q-pb-sm">
+      <pre :class="['tool-result-content', isError ? 'tool-result-content--error' : '']">{{
+        truncatedResult
+      }}</pre>
     </div>
   </div>
 </template>
@@ -64,12 +92,15 @@
 import { ref, computed } from "vue";
 import { useQuasar } from "quasar";
 import { copyToClipboard } from "quasar";
+import { useI18n } from "vue-i18n";
+import { planIcon, planColor } from "@/utils/plan";
 
 const props = defineProps({
   message: { type: Object, required: true },
 });
 
 const $q = useQuasar();
+const { t: $t } = useI18n();
 const showResult = ref(false);
 
 const MAX_RESULT_LINES = 25;
@@ -83,6 +114,11 @@ const cardClass = computed(() => ({
   "tool-call-card--completed": props.message.status === "completed",
   "tool-call-card--error": isError.value,
 }));
+
+const statusLabel = computed(() => {
+  if (props.message.status === "running") return $t("chat.toolRunning");
+  return isError.value ? $t("chat.toolFailed") : $t("chat.toolCompleted");
+});
 
 const toolIcon = computed(() => {
   const name = props.message.toolName || "";
@@ -119,32 +155,53 @@ const inputSummary = computed(() => {
     .join("\n");
 });
 
+// zero's edit_file (verified against the real CLI: {path, edit_type:"text",
+// old_str, new_str}) only reports "Successfully edited X" in the result -
+// the actual change is only present in the tool_call's own input. Rebuild a
+// diff-like view from it instead of just showing the success sentence.
+const editPreview = computed(() => {
+  const name = props.message.toolName;
+  const input = props.message.input || {};
+
+  if (name === "edit_file" && typeof input.old_str === "string" && typeof input.new_str === "string") {
+    const lines = [
+      ...input.old_str.split("\n").map((text) => ({ type: "removed", text: `- ${text}` })),
+      ...input.new_str.split("\n").map((text) => ({ type: "added", text: `+ ${text}` })),
+    ];
+    return { path: input.path || "", lines };
+  }
+
+  // write_file's exact arg name isn't confirmed against the real CLI yet
+  // (didn't get a live sample) - `content` is the common convention, and
+  // this degrades harmlessly to the generic result view if it's wrong.
+  if (name === "write_file" && typeof input.content === "string") {
+    const lines = input.content.split("\n").map((text) => ({ type: "added", text: `+ ${text}` }));
+    return { path: input.path || "", lines };
+  }
+
+  return null;
+});
+
+const planItems = computed(() => {
+  if (props.message.toolName !== "update_plan") return null;
+  const plan = props.message.input?.plan;
+  return Array.isArray(plan) && plan.length > 0 ? plan : null;
+});
+
 function cleanHookOutput(value) {
   if (typeof value !== "string") return value;
-  // Zero appends a "Hook output:" trailer to many tool results; strip it.
+  // zero appends a "Hook output:\n{}" trailer to nearly every tool result;
+  // it's noise (always empty in practice) so we strip it before display.
   const idx = value.indexOf("\n\nHook output:");
   return idx >= 0 ? value.slice(0, idx).trimEnd() : value;
 }
 
 const formattedResult = computed(() => {
   const result = props.message.result || "";
-  const toolName = props.message.toolName || "";
-
-  // File-editing tools emit a human-readable string such as:
-  // "Successfully edited src/stores/zero-store.js (replaced 1 occurrence).\n\nHook output:\n{}"
-  // Extract the useful part and discard the Hook output trailer.
-  if (toolName === "edit_file" || toolName === "apply_patch" || toolName === "write_file") {
-    const cleaned = cleanHookOutput(result);
-    if (typeof cleaned === "string" && cleaned.includes("Successfully ")) {
-      return cleaned;
-    }
-  }
-
   if (typeof result !== "string") return JSON.stringify(result, null, 2);
 
-  // Pretty-print plain JSON results (common for MCP tools), otherwise return
-  // the cleaned string.
-  const trimmed = result.trim();
+  const cleaned = cleanHookOutput(result);
+  const trimmed = cleaned.trim();
   if (
     (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
     (trimmed.startsWith("[") && trimmed.endsWith("]"))
@@ -152,10 +209,10 @@ const formattedResult = computed(() => {
     try {
       return JSON.stringify(JSON.parse(trimmed), null, 2);
     } catch {
-      // Not valid JSON; fall through.
+      // Not valid JSON; fall through to the plain cleaned string.
     }
   }
-  return cleanHookOutput(result);
+  return cleaned;
 });
 
 const truncatedResult = computed(() => {
@@ -167,7 +224,7 @@ const truncatedResult = computed(() => {
 });
 
 function onCopy() {
-  copyToClipboard(props.message.result || "");
+  copyToClipboard(cleanHookOutput(props.message.result) || "");
 }
 </script>
 
@@ -195,9 +252,6 @@ function onCopy() {
   border-color: rgba(244, 67, 54, 0.25);
   background: rgba(244, 67, 54, 0.03);
 }
-.tool-call-completed {
-  border-radius: 6px;
-}
 .tool-input-preview {
   margin: 0;
   font-size: 0.78em;
@@ -206,10 +260,7 @@ function onCopy() {
   color: inherit;
 }
 .tool-result-body {
-  border-top: 1px solid rgba(0, 0, 0, 0.06);
-}
-.tool-call-card--dark .tool-result-body {
-  border-color: rgba(255, 255, 255, 0.06);
+  border-top: 1px solid var(--chat-card-border);
 }
 .tool-result-content {
   margin: 0;
@@ -231,5 +282,64 @@ function onCopy() {
 body.body--dark .tool-result-content--error {
   background: rgba(244, 67, 54, 0.1);
   color: #ff8a80;
+}
+
+.tool-diff {
+  border-top: 1px solid var(--chat-card-border);
+}
+.tool-diff-path {
+  color: var(--chat-text-muted);
+  margin: 6px 0 2px;
+  font-family: "JetBrains Mono", "Fira Code", Consolas, monospace;
+}
+.tool-diff-block {
+  margin: 0;
+  font-size: 0.82em;
+  line-height: 1.5;
+  font-family: "JetBrains Mono", "Fira Code", Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 320px;
+  overflow-y: auto;
+  border-radius: 6px;
+  overflow-x: hidden;
+}
+.tool-diff-line--removed {
+  display: block;
+  background: rgba(244, 67, 54, 0.1);
+  color: #d32f2f;
+  padding: 0 6px;
+}
+body.body--dark .tool-diff-line--removed {
+  background: rgba(244, 67, 54, 0.12);
+  color: #ff8a80;
+}
+.tool-diff-line--added {
+  display: block;
+  background: rgba(25, 210, 77, 0.12);
+  color: #1a9c3f;
+  padding: 0 6px;
+}
+body.body--dark .tool-diff-line--added {
+  background: rgba(25, 210, 77, 0.14);
+  color: #6fe396;
+}
+.tool-diff-error {
+  color: var(--chat-text-muted);
+}
+
+.tool-plan {
+  border-top: 1px solid var(--chat-card-border);
+  padding-top: 6px;
+}
+.tool-plan-item {
+  color: var(--chat-text);
+}
+.tool-plan-done {
+  color: var(--chat-text-muted);
+  text-decoration: line-through;
+}
+.tool-plan-notes {
+  color: var(--chat-text-muted);
 }
 </style>

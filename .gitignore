@@ -5,6 +5,9 @@ dist/
 .DS_Store
 AGENTS.md
 .claude
+.zero
+.zero-sessions-test
+.agents
 
 # Test artifacts
 tests/install-test/zero-desktop-*.AppImage

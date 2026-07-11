@@ -112,6 +112,7 @@
         :disabled="!canSend"
         :loading="zeroStore.runInProgress"
         :working-status="zeroStore.workingStatus"
+        :plan="zeroStore.activePlan"
         @send="onSend"
       />
     </div>
