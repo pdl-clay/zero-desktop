@@ -140,7 +140,9 @@
                       v-ripple
                       :class="[
                         'session-item q-px-sm',
-                        { 'session-item--active': session.session_id === zeroStore.currentSessionId },
+                        {
+                          'session-item--active': session.session_id === zeroStore.currentSessionId,
+                        },
                       ]"
                       @click="onSelectSession(session)"
                     >
@@ -193,7 +195,9 @@
                       <q-icon name="add_comment" size="16px" color="grey-5" />
                     </q-item-section>
                     <q-item-section>
-                      <q-item-label class="text-body2">{{ $t("workspace.newSession") }}</q-item-label>
+                      <q-item-label class="text-body2">{{
+                        $t("workspace.newSession")
+                      }}</q-item-label>
                     </q-item-section>
                   </q-item>
                 </q-list>
@@ -226,7 +230,9 @@
         }"
         @click="sessionPanelOpen = !sessionPanelOpen"
       >
-        <q-tooltip>{{ sessionPanelOpen ? $t("workspace.closePanel") : $t("workspace.openPanel") }}</q-tooltip>
+        <q-tooltip>{{
+          sessionPanelOpen ? $t("workspace.closePanel") : $t("workspace.openPanel")
+        }}</q-tooltip>
       </q-btn>
     </q-drawer>
 
@@ -272,7 +278,7 @@ const dragStartMouseY = ref(0);
 const dragHoldTimer = ref(null);
 const workspaceColumnRef = ref(null);
 
-const DRAG_HOLD_DELAY = 150;
+const DRAG_HOLD_DELAY = 200;
 
 watch(
   () => $q.screen.width,
@@ -743,6 +749,7 @@ function onDocumentMouseUp() {
   border-radius: 10px;
   border: 1px solid transparent;
   color: var(--chat-text);
+  width: 87%;
   transition:
     background 0.15s ease,
     border-color 0.15s ease;

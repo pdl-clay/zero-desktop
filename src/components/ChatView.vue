@@ -15,15 +15,56 @@
       style="padding-bottom: 84px"
       @scroll="onScroll"
     >
+      <!-- Loading session history -->
       <div
-        v-if="
+        v-if="zeroStore.isLoadingSession"
+        class="flex flex-center full-height text-grey-6"
+      >
+        <div class="text-center" style="width: 100%; max-width: 500px">
+          <q-spinner-dots size="40px" color="grey-6" />
+          <div class="text-body1 q-mt-md">
+            {{
+              loadingSessionInfo
+                ? $t("chat.loadingSessionTitle", { title: loadingSessionInfo.title || loadingSessionInfo.session_id?.slice(-8) })
+                : $t("chat.loadingSession")
+            }}
+          </div>
+          <div v-if="loadingSessionInfo" class="text-caption q-mt-xs text-grey-5">
+            {{ loadingSessionInfo.model_id || "" }}
+            <template v-if="loadingSessionInfo.model_id && loadingSessionInfo.created_at">&nbsp;&middot;&nbsp;</template>
+            {{ loadingSessionInfo.created_at ? formatSessionDate(loadingSessionInfo.created_at) : "" }}
+          </div>
+
+          <!-- Skeleton placeholders -->
+          <div class="skeleton-list q-mt-lg q-px-md">
+            <div
+              v-for="i in 4"
+              :key="'sk-' + i"
+              class="skeleton-bar"
+              :class="i % 2 === 0 ? 'skeleton-bar--short' : 'skeleton-bar--long'"
+              :style="{ animationDelay: `${i * 120}ms` }"
+            />
+          </div>
+        </div>
+      </div>
+
+      <!-- Empty state -->
+      <div
+        v-else-if="
           zeroStore.messages.length === 0 &&
           !zeroStore.currentResponse &&
           !zeroStore.currentThinking
         "
         class="flex flex-center full-height text-grey-6 text-center"
       >
-        <div>
+        <!-- Session exists but has no messages -->
+        <div v-if="zeroStore.currentSessionId">
+          <q-icon name="chat_bubble_outline" size="48px" color="grey-5" />
+          <div class="text-body1 q-mt-sm">{{ $t("chat.emptySession") }}</div>
+          <div class="text-caption q-mt-xs">{{ $t("chat.emptySessionSubtitle") }}</div>
+        </div>
+        <!-- No session at all: prompt to send first message -->
+        <div v-else>
           <img
             :src="$q.dark.isActive ? '/zero-completa.png' : '/zero-completa-white.png'"
             alt="Zero"
@@ -114,12 +155,17 @@ const messagesContainer = ref(null);
 const isUserAtBottom = ref(true);
 
 const pendingPermission = computed(() =>
-  zeroStore.messages.find(
-    (m) => m.type === "permission_request" && m.status === "pending",
-  ),
+  zeroStore.messages.find((m) => m.type === "permission_request" && m.status === "pending"),
 );
 
-const canSend = computed(() => zeroStore.isConnected && !zeroStore.runInProgress && !pendingPermission.value);
+const loadingSessionInfo = computed(() => {
+  if (!zeroStore.currentSessionId) return null;
+  return zeroStore.sessions.find((s) => s.session_id === zeroStore.currentSessionId) || null;
+});
+
+const canSend = computed(
+  () => zeroStore.isConnected && !zeroStore.runInProgress && !pendingPermission.value,
+);
 
 // Quasar's QPage defaults to `min-height`, which lets content grow past the
 // viewport and makes the whole window scroll instead of just the message
@@ -129,6 +175,16 @@ const canSend = computed(() => zeroStore.isConnected && !zeroStore.runInProgress
 // to its bottom instead of drifting with page-level scroll.
 function pageStyleFn(offset, height) {
   return { height: `${height - offset}px` };
+}
+
+function formatSessionDate(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return (
+    d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "2-digit" }) +
+    " " +
+    d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
+  );
 }
 
 function scrollToBottomIfNeeded() {
@@ -207,5 +263,44 @@ async function onSend(content) {
     rgba(18, 18, 18, 0.92) 16px,
     rgba(18, 18, 18, 0.98) 100%
   );
+}
+
+/* Skeleton loading animation */
+.skeleton-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.skeleton-bar {
+  height: 14px;
+  border-radius: 7px;
+  background: linear-gradient(
+    90deg,
+    rgba(128, 128, 128, 0.12) 25%,
+    rgba(128, 128, 128, 0.22) 50%,
+    rgba(128, 128, 128, 0.12) 75%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s ease-in-out infinite;
+}
+
+.skeleton-bar--long {
+  width: 80%;
+}
+
+.skeleton-bar--short {
+  width: 50%;
+  align-self: flex-end;
+}
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
 }
 </style>

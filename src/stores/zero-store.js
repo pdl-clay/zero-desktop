@@ -39,6 +39,7 @@ export const useZeroStore = defineStore("zero", {
     unlistenStderr: null,
     unlistenProcessExited: null,
     runInProgress: false,
+    isLoadingSession: false,
     lastStderrLines: [],
     _sessionSyncTimer: null,
     _lastEventCount: 0,
@@ -154,6 +155,7 @@ export const useZeroStore = defineStore("zero", {
       this.currentResponse = "";
       this.currentThinking = "";
       this._lastEventCount = 0;
+      this.isLoadingSession = true;
 
       try {
         const events = await loadSessionHistory(sessionId);
@@ -161,6 +163,8 @@ export const useZeroStore = defineStore("zero", {
         this.buildMessagesFromHistory(events);
       } catch {
         this.messages = [];
+      } finally {
+        this.isLoadingSession = false;
       }
 
       this._startSessionSync();
@@ -209,10 +213,9 @@ export const useZeroStore = defineStore("zero", {
       // Load permission decisions saved from a previous live session so that
       // recovered permission cards show the correct approved/denied status
       // instead of all appearing as "pending" with fresh Approve/Deny buttons.
-      const savedDecisions =
-        this.currentSessionId
-          ? this._loadPermissionDecisions(this.currentSessionId)
-          : {};
+      const savedDecisions = this.currentSessionId
+        ? this._loadPermissionDecisions(this.currentSessionId)
+        : {};
 
       for (const event of events) {
         const payload = event.payload || {};
@@ -280,9 +283,7 @@ export const useZeroStore = defineStore("zero", {
             const action = payload.action;
             const req = permId
               ? this.messages.find(
-                  (m) =>
-                    m.type === "permission_request" &&
-                    m.permissionId === permId,
+                  (m) => m.type === "permission_request" && m.permissionId === permId,
                 )
               : null;
             if (req) {
@@ -331,10 +332,7 @@ export const useZeroStore = defineStore("zero", {
       const decisions = this._loadPermissionDecisions(sessionId);
       decisions[permissionId] = decision;
       try {
-        localStorage.setItem(
-          this._permStorageKey(sessionId),
-          JSON.stringify(decisions),
-        );
+        localStorage.setItem(this._permStorageKey(sessionId), JSON.stringify(decisions));
       } catch {
         // localStorage full or unavailable — non-critical.
       }
@@ -591,11 +589,7 @@ export const useZeroStore = defineStore("zero", {
       if (!msg) return;
       msg.status = "approved";
       if (this.currentSessionId) {
-        this._savePermissionDecision(
-          this.currentSessionId,
-          permissionId,
-          "approved",
-        );
+        this._savePermissionDecision(this.currentSessionId, permissionId, "approved");
       }
       try {
         await sendPermissionDecision(permissionId, "approved");
@@ -614,11 +608,7 @@ export const useZeroStore = defineStore("zero", {
       if (!msg) return;
       msg.status = "denied";
       if (this.currentSessionId) {
-        this._savePermissionDecision(
-          this.currentSessionId,
-          permissionId,
-          "denied",
-        );
+        this._savePermissionDecision(this.currentSessionId, permissionId, "denied");
       }
       try {
         await sendPermissionDecision(permissionId, "denied");

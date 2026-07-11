@@ -145,7 +145,10 @@ const formattedResult = computed(() => {
   // Pretty-print plain JSON results (common for MCP tools), otherwise return
   // the cleaned string.
   const trimmed = result.trim();
-  if ((trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
+  if (
+    (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+    (trimmed.startsWith("[") && trimmed.endsWith("]"))
+  ) {
     try {
       return JSON.stringify(JSON.parse(trimmed), null, 2);
     } catch {
