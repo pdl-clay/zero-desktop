@@ -10,6 +10,7 @@ use tokio::sync::Mutex;
 
 use crate::acp::{parse_line, AcpMessage, AcpPeer};
 use crate::locator::locate_zero;
+use crate::ImageAttachment;
 
 /// Events emitted to the frontend on `zero:event`. Kept in the same shape
 /// zero's old stream-json protocol used ({schemaVersion, type, ...payload})
@@ -58,6 +59,24 @@ fn extract_tool_result_text(content: Option<&serde_json::Value>) -> String {
         .and_then(|t| t.as_str())
         .unwrap_or("")
         .to_string()
+}
+
+/// Builds the `prompt` content-block array for `session/prompt` (ACP:
+/// `[{"type":"text",...}, {"type":"image",...}]`). The text block is
+/// omitted for an image-only message instead of sending an empty string.
+fn build_prompt_blocks(content: &str, image: Option<&ImageAttachment>) -> Vec<serde_json::Value> {
+    let mut blocks = Vec::new();
+    if !content.is_empty() {
+        blocks.push(serde_json::json!({ "type": "text", "text": content }));
+    }
+    if let Some(img) = image {
+        blocks.push(serde_json::json!({
+            "type": "image",
+            "mimeType": img.mime_type,
+            "data": img.data,
+        }));
+    }
+    blocks
 }
 
 /// Translate an ACP `session/update` notification's `params` into our
@@ -711,31 +730,44 @@ impl ZeroBridge {
         Ok((live.peer.clone(), s.session_id.clone(), s.history_path.clone()))
     }
 
-    /// Send a user message. Fires `session/prompt` in the background (it
-    /// only resolves once the whole turn ends) and returns immediately -
-    /// progress is tracked via `zero:event`/`zero:permission-request`, same
-    /// as the app already expects.
-    pub async fn send(&self, content: String) -> Result<(), String> {
+    /// Send a user message, with an optional image attachment. Fires
+    /// `session/prompt` in the background (it only resolves once the whole
+    /// turn ends) and returns immediately - progress is tracked via
+    /// `zero:event`/`zero:permission-request`, same as the app already
+    /// expects.
+    pub async fn send(&self, content: String, image: Option<ImageAttachment>) -> Result<(), String> {
         let (peer, session_id, history_path) = self.ensure_live().await?;
 
         // First message of a session (no title recorded yet) gives it a
         // real name instead of zero's generic "ACP session" default - there
         // is no discovered ACP method to set the title on zero's side, so
         // zero-desktop tracks it locally and overlays it in list_zero_sessions.
+        // An image-only message (empty content) falls back to the image's
+        // filename instead of deriving a title from an empty string.
         if get_session_title(&session_id).is_none() {
-            let _ = set_session_title(&session_id, &derive_title_from_message(&content));
+            let title_source = if content.trim().is_empty() {
+                image.as_ref().map(|i| i.name.clone()).unwrap_or_default()
+            } else {
+                content.clone()
+            };
+            let _ = set_session_title(&session_id, &derive_title_from_message(&title_source));
         }
 
         // The user's own turn was never persisted before - only the agent's
         // side went through `spawn_stdout_reader`. Without this, replaying a
         // session's history showed the agent's tool calls/reasoning with no
-        // record of what was actually asked.
-        append_history(
-            &history_path,
-            "message",
-            &serde_json::json!({ "role": "user", "content": content.clone() }),
-        )
-        .await;
+        // record of what was actually asked. The `image` key is only added
+        // when present, so text-only history entries stay identical to
+        // before this field existed.
+        let mut message_payload = serde_json::json!({ "role": "user", "content": content.clone() });
+        if let Some(ref img) = image {
+            message_payload["image"] = serde_json::json!({
+                "mimeType": img.mime_type,
+                "data": img.data,
+                "name": img.name,
+            });
+        }
+        append_history(&history_path, "message", &message_payload).await;
 
         let app = self.app.clone();
         tokio::spawn(async move {
@@ -744,7 +776,7 @@ impl ZeroBridge {
                     "session/prompt",
                     serde_json::json!({
                         "sessionId": session_id,
-                        "prompt": [{ "type": "text", "text": content }],
+                        "prompt": build_prompt_blocks(&content, image.as_ref()),
                     }),
                 )
                 .await;
@@ -930,5 +962,40 @@ mod tests {
         assert_eq!(parsed.schema_version, original.schema_version);
         assert_eq!(parsed.event_type, original.event_type);
         assert_eq!(parsed.payload["delta"], original.payload["delta"]);
+    }
+
+    fn test_image() -> ImageAttachment {
+        ImageAttachment {
+            mime_type: "image/png".to_string(),
+            data: "iVBORw0KGgo=".to_string(),
+            name: "screenshot.png".to_string(),
+        }
+    }
+
+    #[test]
+    fn test_build_prompt_blocks_text_only() {
+        let blocks = build_prompt_blocks("hello", None);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0]["type"], "text");
+        assert_eq!(blocks[0]["text"], "hello");
+    }
+
+    #[test]
+    fn test_build_prompt_blocks_image_only() {
+        let img = test_image();
+        let blocks = build_prompt_blocks("", Some(&img));
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0]["type"], "image");
+        assert_eq!(blocks[0]["mimeType"], "image/png");
+        assert_eq!(blocks[0]["data"], "iVBORw0KGgo=");
+    }
+
+    #[test]
+    fn test_build_prompt_blocks_text_and_image() {
+        let img = test_image();
+        let blocks = build_prompt_blocks("what is this?", Some(&img));
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0]["type"], "text");
+        assert_eq!(blocks[1]["type"], "image");
     }
 }

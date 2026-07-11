@@ -31,7 +31,25 @@
       <span class="chat-input__status-dot" />
       <span class="chat-input__status-label">{{ statusLabel }}</span>
     </div>
+    <div v-if="attachedImage" class="chat-input__attachment">
+      <div class="chat-input__thumb-wrap">
+        <img :src="attachedImage.previewUrl" :alt="attachedImage.name" class="chat-input__thumb" />
+        <button type="button" class="chat-input__thumb-remove" @click="removeAttachedImage">
+          <q-icon name="close" size="12px" />
+          <q-tooltip>{{ t("chat.removeImage") }}</q-tooltip>
+        </button>
+      </div>
+    </div>
     <div class="chat-input__row">
+      <button
+        type="button"
+        class="chat-input__attach"
+        :disabled="disabled || pickingImage"
+        @click="pickImage"
+      >
+        <q-icon name="attach_file" size="18px" />
+        <q-tooltip>{{ t("chat.attachImage") }}</q-tooltip>
+      </button>
       <textarea
         ref="textareaRef"
         v-model="localValue"
@@ -41,7 +59,7 @@
         rows="1"
         @keydown.enter="onEnterKey"
         @input="autoResize"
-        @focus="focused = true"
+        @focus="onFocus"
         @blur="focused = false"
       />
       <button
@@ -66,7 +84,10 @@
 import { ref, computed, nextTick, watch } from "vue";
 import { useQuasar } from "quasar";
 import { useI18n } from "vue-i18n";
+import { open } from "@tauri-apps/plugin-dialog";
 import { planIcon, planColor } from "@/utils/plan";
+import { readImageAttachment } from "@/services/zero";
+import { useZeroStore } from "@/stores/zero-store";
 
 const props = defineProps({
   modelValue: { type: String, default: "" },
@@ -77,19 +98,24 @@ const props = defineProps({
   plan: { type: Array, default: null },
 });
 
-const emit = defineEmits(["update:modelValue", "send", "cancel"]);
+const emit = defineEmits(["update:modelValue", "send", "cancel", "focus"]);
 
 const $q = useQuasar();
 const { t } = useI18n();
+const zeroStore = useZeroStore();
 const textareaRef = ref(null);
 const focused = ref(false);
+const attachedImage = ref(null);
+const pickingImage = ref(false);
 
 const localValue = computed({
   get: () => props.modelValue,
   set: (value) => emit("update:modelValue", value),
 });
 
-const canSubmit = computed(() => !props.disabled && props.modelValue.trim().length > 0);
+const canSubmit = computed(
+  () => !props.disabled && (props.modelValue.trim().length > 0 || !!attachedImage.value),
+);
 
 const statusLabel = computed(() => {
   const status = props.workingStatus;
@@ -135,12 +161,53 @@ function onEnterKey(event) {
 
 function submit() {
   if (!canSubmit.value) return;
-  emit("send", props.modelValue.trim());
+  emit("send", {
+    content: props.modelValue.trim(),
+    image: attachedImage.value
+      ? {
+          mimeType: attachedImage.value.mimeType,
+          data: attachedImage.value.data,
+          name: attachedImage.value.name,
+        }
+      : null,
+  });
+  attachedImage.value = null;
   nextTick(autoResize);
+}
+
+async function pickImage() {
+  const selected = await open({
+    multiple: false,
+    title: t("chat.attachImageTitle"),
+    filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp"] }],
+  });
+  if (!selected) return;
+
+  pickingImage.value = true;
+  try {
+    const attachment = await readImageAttachment(selected);
+    attachedImage.value = {
+      ...attachment,
+      previewUrl: `data:${attachment.mimeType};base64,${attachment.data}`,
+    };
+  } catch (error) {
+    zeroStore.zeroError = error;
+  } finally {
+    pickingImage.value = false;
+  }
+}
+
+function removeAttachedImage() {
+  attachedImage.value = null;
 }
 
 function onCancel() {
   emit("cancel");
+}
+
+function onFocus() {
+  focused.value = true;
+  emit("focus");
 }
 
 defineExpose({ focus: () => textareaRef.value?.focus() });
@@ -224,6 +291,53 @@ defineExpose({ focus: () => textareaRef.value?.focus() });
   overflow: hidden;
   text-overflow: ellipsis;
   line-height: 1.3;
+}
+
+.chat-input__attachment {
+  padding: 10px 16px 0;
+}
+
+.chat-input__thumb-wrap {
+  position: relative;
+  display: inline-flex;
+  width: 48px;
+  height: 48px;
+}
+
+.chat-input__thumb {
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
+  object-fit: cover;
+  border: 1px solid rgba(128, 128, 128, 0.25);
+}
+
+.chat-input__thumb-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(244, 67, 54, 0.14);
+  color: #f44336;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    transform 0.1s ease;
+}
+
+.chat-input__thumb-remove:hover {
+  background: rgba(244, 67, 54, 0.24);
+  transform: scale(1.04);
+}
+
+.chat-input__thumb-remove:active {
+  transform: scale(0.96);
 }
 
 @keyframes chat-input-pulse {
@@ -335,6 +449,37 @@ defineExpose({ focus: () => textareaRef.value?.focus() });
 
 .chat-input__textarea::placeholder {
   color: rgba(128, 128, 128, 0.8);
+}
+
+.chat-input__attach {
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(128, 128, 128, 0.14);
+  color: rgba(128, 128, 128, 0.9);
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    transform 0.1s ease;
+}
+
+.chat-input__attach:hover:not(:disabled) {
+  background: rgba(128, 128, 128, 0.24);
+  transform: scale(1.06);
+}
+
+.chat-input__attach:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.chat-input__attach:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .chat-input__send {

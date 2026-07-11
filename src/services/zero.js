@@ -19,11 +19,24 @@ export async function startZeroSession(cwd, sessionId = null) {
 }
 
 /**
- * Send a user message to the active zero session.
+ * Send a user message, with an optional image attachment, to the active
+ * zero session.
  * @param {string} content
+ * @param {{ mimeType: string, data: string, name: string } | null} [image]
  */
-export async function sendZeroMessage(content) {
-  return invoke("send_zero_message", { content });
+export async function sendZeroMessage(content, image = null) {
+  return invoke("send_zero_message", { content, image });
+}
+
+/**
+ * Read an image file picked from the native file dialog and return it
+ * base64-encoded, ready to preview (as a `data:` URI) or attach to a
+ * message. Rejects files over 10MB and unsupported extensions server-side.
+ * @param {string} path - absolute path to the image file
+ * @returns {Promise<{ mimeType: string, data: string, name: string }>}
+ */
+export async function readImageAttachment(path) {
+  return invoke("read_image_attachment", { path });
 }
 
 /**

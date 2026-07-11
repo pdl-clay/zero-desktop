@@ -272,7 +272,7 @@
           <div class="text-h6 q-mt-md">{{ $t("workspace.select") }}</div>
         </div>
       </q-page>
-      <ChatView v-else :workspace-path="workspacesStore.activePath" />
+      <ChatView v-else :workspace-path="workspacesStore.activePath" @focus-input="onFocusInput" />
     </q-page-container>
   </q-layout>
 </template>
@@ -478,6 +478,12 @@ async function onBrowseAndAdd() {
 
 async function onRemoveWorkspace(ws) {
   workspacesStore.remove(ws.path);
+}
+
+function onFocusInput() {
+  if ($q.screen.width < 1024) {
+    sessionPanelOpen.value = false;
+  }
 }
 
 function onAvatarMouseDown(event, index) {

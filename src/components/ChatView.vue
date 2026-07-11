@@ -82,10 +82,6 @@
         <TextMessage v-if="message.type === 'text'" :message="message" />
         <ThinkingBlock v-else-if="message.type === 'thinking'" :message="message" />
         <ToolCallMessage v-else-if="message.type === 'tool_call'" :message="message" />
-        <PendingPermissionPanel
-          v-else-if="message.type === 'permission_request' && message.answerable"
-          :request="message"
-        />
         <PermissionDecisionBadge
           v-else-if="message.type === 'permission_request'"
           :message="permissionDecisionBadgeFrom(message)"
@@ -122,6 +118,7 @@
         :plan="zeroStore.activePlan"
         @send="onSend"
         @cancel="zeroStore.cancelRun()"
+        @focus="$emit('focus-input')"
       />
     </div>
   </q-page>
@@ -152,7 +149,9 @@ function permissionDecisionBadgeFrom(request) {
   };
 }
 
-const props = defineProps({
+const props = defineEmits(["focus-input"]);
+
+defineProps({
   workspacePath: {
     type: String,
     required: true,
@@ -235,11 +234,11 @@ watch(
   },
 );
 
-async function onSend(content) {
-  if (!canSend.value || !content) return;
+async function onSend({ content, image }) {
+  if (!canSend.value || (!content && !image)) return;
 
   input.value = "";
-  await zeroStore.sendMessage(content);
+  await zeroStore.sendMessage(content, image);
 }
 
 function onKeydown(event) {

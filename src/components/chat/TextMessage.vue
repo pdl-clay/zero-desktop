@@ -1,11 +1,20 @@
 <template>
-  <q-chat-message
-    :text="[renderedText]"
-    :text-html="isMarkdown"
-    :sent="message.role === 'user'"
-    :bg-color="bubbleColor"
-    :class="[isMarkdown ? 'md-chat-message' : '', bubbleClass]"
-  />
+  <div class="text-message" :class="message.role === 'user' ? 'text-message--sent' : ''">
+    <img
+      v-if="message.image"
+      :src="imageSrc"
+      :alt="message.image.name"
+      class="text-message__thumb"
+    />
+    <q-chat-message
+      v-if="message.content"
+      :text="[renderedText]"
+      :text-html="isMarkdown"
+      :sent="message.role === 'user'"
+      :bg-color="bubbleColor"
+      :class="[isMarkdown ? 'md-chat-message' : '', bubbleClass]"
+    />
+  </div>
 </template>
 
 <script setup>
@@ -20,6 +29,12 @@ const isMarkdown = computed(() => props.message.role !== "user");
 
 const renderedText = computed(() =>
   isMarkdown.value ? renderMarkdown(props.message.content) : props.message.content,
+);
+
+const imageSrc = computed(() =>
+  props.message.image
+    ? `data:${props.message.image.mimeType};base64,${props.message.image.data}`
+    : null,
 );
 
 // Backgrounds for user/assistant are handled entirely via the .chat-bubble-*
@@ -42,6 +57,24 @@ const bubbleClass = computed(() => {
 </script>
 
 <style scoped>
+.text-message {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.text-message--sent {
+  align-items: flex-end;
+}
+
+.text-message__thumb {
+  max-width: 220px;
+  max-height: 220px;
+  border-radius: 12px;
+  object-fit: cover;
+  border: 1px solid var(--chat-card-border);
+}
+
 .chat-bubble-response :deep(.q-message-text--received) {
   color: var(--chat-card-bg);
   border: 1px solid var(--chat-card-border);

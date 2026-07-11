@@ -125,7 +125,7 @@ export const useZeroStore = defineStore("zero", {
       }
     },
 
-    async sendMessage(content) {
+    async sendMessage(content, image = null) {
       if (!this.currentWorkspace) {
         this.zeroError = "No workspace provided";
         return;
@@ -139,13 +139,13 @@ export const useZeroStore = defineStore("zero", {
         return;
       }
 
-      this.addUserMessage(content);
+      this.addUserMessage(content, image);
       this.currentResponse = "";
       this.currentThinking = "";
       this.runInProgress = true;
 
       try {
-        await sendZeroMessage(content);
+        await sendZeroMessage(content, image);
       } catch (error) {
         this.zeroError = error;
         this.runInProgress = false;
@@ -252,9 +252,9 @@ export const useZeroStore = defineStore("zero", {
         const payload = event.payload || {};
         switch (event.type) {
           case "message":
-            if (!payload.content) break;
+            if (!payload.content && !payload.image) break;
             if (payload.role === "user") {
-              this.addUserMessage(payload.content);
+              this.addUserMessage(payload.content || "", payload.image || null);
             } else {
               this.addAssistantMessage(payload.content);
             }
@@ -501,12 +501,13 @@ export const useZeroStore = defineStore("zero", {
       this.currentThinking = "";
     },
 
-    addUserMessage(content) {
+    addUserMessage(content, image = null) {
       this.messages.push({
         id: nextId(),
         type: "text",
         role: "user",
         content,
+        image,
         timestamp: Date.now(),
       });
     },

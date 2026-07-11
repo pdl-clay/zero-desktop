@@ -35,3 +35,4 @@ tokio = { version = "1", features = [
 which = "7"
 dirs = "6"
 thiserror = "2"
+base64 = "0.22"

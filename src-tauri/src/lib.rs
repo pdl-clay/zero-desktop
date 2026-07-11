@@ -5,10 +5,11 @@ pub mod locator;
 use bridge::{history_path_for, ZeroBridge};
 use bridge::{get_session_title, remove_session_title, set_session_title};
 use bridge::{get_session_model, remove_session_model};
+use base64::Engine;
 use locator::locate_zero;
 use serde::Deserialize;
 use std::io::BufRead;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::Manager;
 
@@ -42,6 +43,68 @@ pub struct SessionEvent {
     pub payload: serde_json::Value,
     #[serde(rename = "createdAt")]
     pub created_at: String,
+}
+
+/// A single image attached to a user message, sent to the agent as an ACP
+/// image content block (`{"type":"image","mimeType":...,"data":...}`) and
+/// stored the same way in zero-desktop's own session history.
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageAttachment {
+    pub mime_type: String,
+    /// Base64-encoded image bytes, no `data:` prefix.
+    pub data: String,
+    pub name: String,
+}
+
+const MAX_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
+
+fn mime_type_from_extension(path: &Path) -> Result<String, String> {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    match ext.as_str() {
+        "png" => Ok("image/png".to_string()),
+        "jpg" | "jpeg" => Ok("image/jpeg".to_string()),
+        "gif" => Ok("image/gif".to_string()),
+        "webp" => Ok("image/webp".to_string()),
+        other => Err(format!("Unsupported image type: .{other}")),
+    }
+}
+
+/// Reads an image file picked from the native file dialog and returns it
+/// base64-encoded, ready to preview (as a `data:` URI) or attach to a
+/// message. The dialog only ever gives the frontend a path, not bytes - no
+/// `fs` plugin/capability is installed, so this plain command reads the file
+/// with the same unrestricted `tokio::fs` access `list_zero_sessions`/
+/// `delete_session` already use, rather than adding a new plugin dependency.
+#[tauri::command]
+async fn read_image_attachment(path: String) -> Result<ImageAttachment, String> {
+    let path_buf = PathBuf::from(&path);
+
+    let metadata = tokio::fs::metadata(&path_buf)
+        .await
+        .map_err(|e| format!("Failed to read image: {e}"))?;
+    if metadata.len() > MAX_IMAGE_BYTES {
+        return Err(format!(
+            "Image is too large ({:.1} MB). Max size is 10 MB.",
+            metadata.len() as f64 / (1024.0 * 1024.0)
+        ));
+    }
+
+    let mime_type = mime_type_from_extension(&path_buf)?;
+    let bytes = tokio::fs::read(&path_buf)
+        .await
+        .map_err(|e| format!("Failed to read image: {e}"))?;
+    let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    let name = path_buf
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "image".to_string());
+
+    Ok(ImageAttachment { mime_type, data, name })
 }
 
 const RELEVANT_HISTORY_EVENT_TYPES: &[&str] = &[
@@ -192,8 +255,9 @@ async fn start_zero_session(
 async fn send_zero_message(
     state: tauri::State<'_, Arc<ZeroBridge>>,
     content: String,
+    image: Option<ImageAttachment>,
 ) -> Result<(), String> {
-    state.send(content).await
+    state.send(content, image).await
 }
 
 #[tauri::command]
@@ -243,7 +307,8 @@ pub fn run() {
             list_zero_sessions,
             load_session_history,
             delete_session,
-            rename_session
+            rename_session,
+            read_image_attachment
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
