@@ -45,66 +45,107 @@ pub struct SessionEvent {
     pub created_at: String,
 }
 
-/// A single image attached to a user message, sent to the agent as an ACP
-/// image content block (`{"type":"image","mimeType":...,"data":...}`) and
-/// stored the same way in zero-desktop's own session history.
+/// A single file attached to a user message. Images are sent to the agent as
+/// ACP image content blocks (`{"type":"image","mimeType":...,"data":...}`);
+/// text/code files are sent as text content blocks so the agent can read them.
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ImageAttachment {
+pub struct FileAttachment {
     pub mime_type: String,
-    /// Base64-encoded image bytes, no `data:` prefix.
+    /// Base64-encoded file bytes, no `data:` prefix. Text files are also
+    /// included as base64 for a consistent wire shape, but decoded to UTF-8
+    /// when building ACP prompt blocks.
     pub data: String,
     pub name: String,
 }
 
-const MAX_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
+const MAX_FILE_BYTES: u64 = 10 * 1024 * 1024;
 
-fn mime_type_from_extension(path: &Path) -> Result<String, String> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AttachmentKind {
+    Image,
+    Text,
+}
+
+fn attachment_kind_from_extension(path: &Path) -> Result<(AttachmentKind, String), String> {
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("")
         .to_lowercase();
     match ext.as_str() {
-        "png" => Ok("image/png".to_string()),
-        "jpg" | "jpeg" => Ok("image/jpeg".to_string()),
-        "gif" => Ok("image/gif".to_string()),
-        "webp" => Ok("image/webp".to_string()),
-        other => Err(format!("Unsupported image type: .{other}")),
+        // Images
+        "png" => Ok((AttachmentKind::Image, "image/png".to_string())),
+        "jpg" | "jpeg" => Ok((AttachmentKind::Image, "image/jpeg".to_string())),
+        "gif" => Ok((AttachmentKind::Image, "image/gif".to_string())),
+        "webp" => Ok((AttachmentKind::Image, "image/webp".to_string())),
+        // Plain text / documents
+        "txt" => Ok((AttachmentKind::Text, "text/plain".to_string())),
+        "md" => Ok((AttachmentKind::Text, "text/markdown".to_string())),
+        "csv" => Ok((AttachmentKind::Text, "text/csv".to_string())),
+        "json" => Ok((AttachmentKind::Text, "application/json".to_string())),
+        "yaml" | "yml" => Ok((AttachmentKind::Text, "application/yaml".to_string())),
+        "xml" => Ok((AttachmentKind::Text, "application/xml".to_string())),
+        "html" | "htm" => Ok((AttachmentKind::Text, "text/html".to_string())),
+        "css" => Ok((AttachmentKind::Text, "text/css".to_string())),
+        "js" => Ok((AttachmentKind::Text, "text/javascript".to_string())),
+        "ts" => Ok((AttachmentKind::Text, "text/typescript".to_string())),
+        "jsx" => Ok((AttachmentKind::Text, "text/jsx".to_string())),
+        "tsx" => Ok((AttachmentKind::Text, "text/tsx".to_string())),
+        "py" => Ok((AttachmentKind::Text, "text/x-python".to_string())),
+        "go" => Ok((AttachmentKind::Text, "text/x-go".to_string())),
+        "rs" => Ok((AttachmentKind::Text, "text/x-rust".to_string())),
+        "java" => Ok((AttachmentKind::Text, "text/x-java".to_string())),
+        "kt" => Ok((AttachmentKind::Text, "text/x-kotlin".to_string())),
+        "swift" => Ok((AttachmentKind::Text, "text/x-swift".to_string())),
+        "c" => Ok((AttachmentKind::Text, "text/x-c".to_string())),
+        "cpp" | "cc" | "cxx" | "h" | "hpp" => Ok((AttachmentKind::Text, "text/x-c++".to_string())),
+        "rb" => Ok((AttachmentKind::Text, "text/x-ruby".to_string())),
+        "php" => Ok((AttachmentKind::Text, "text/x-php".to_string())),
+        "sh" => Ok((AttachmentKind::Text, "text/x-shellscript".to_string())),
+        "sql" => Ok((AttachmentKind::Text, "text/x-sql".to_string())),
+        "dockerfile" => Ok((AttachmentKind::Text, "text/x-dockerfile".to_string())),
+        other => Err(format!("Unsupported file type: .{other}")),
     }
 }
 
-/// Reads an image file picked from the native file dialog and returns it
-/// base64-encoded, ready to preview (as a `data:` URI) or attach to a
-/// message. The dialog only ever gives the frontend a path, not bytes - no
-/// `fs` plugin/capability is installed, so this plain command reads the file
-/// with the same unrestricted `tokio::fs` access `list_zero_sessions`/
-/// `delete_session` already use, rather than adding a new plugin dependency.
+/// Reads a file picked from the native file dialog and returns it
+/// base64-encoded, ready to preview or attach to a message. The dialog only
+/// ever gives the frontend a path, not bytes - no `fs` plugin/capability is
+/// installed, so this plain command reads the file with the same unrestricted
+/// `tokio::fs` access `list_zero_sessions`/`delete_session` already use,
+/// rather than adding a new plugin dependency.
 #[tauri::command]
-async fn read_image_attachment(path: String) -> Result<ImageAttachment, String> {
+async fn read_file_attachment(path: String) -> Result<FileAttachment, String> {
     let path_buf = PathBuf::from(&path);
 
     let metadata = tokio::fs::metadata(&path_buf)
         .await
-        .map_err(|e| format!("Failed to read image: {e}"))?;
-    if metadata.len() > MAX_IMAGE_BYTES {
+        .map_err(|e| format!("Failed to read file: {e}"))?;
+    if metadata.len() > MAX_FILE_BYTES {
         return Err(format!(
-            "Image is too large ({:.1} MB). Max size is 10 MB.",
+            "File is too large ({:.1} MB). Max size is 10 MB.",
             metadata.len() as f64 / (1024.0 * 1024.0)
         ));
     }
 
-    let mime_type = mime_type_from_extension(&path_buf)?;
+    let (kind, mime_type) = attachment_kind_from_extension(&path_buf)?;
     let bytes = tokio::fs::read(&path_buf)
         .await
-        .map_err(|e| format!("Failed to read image: {e}"))?;
+        .map_err(|e| format!("Failed to read file: {e}"))?;
+    if kind == AttachmentKind::Text {
+        // Reject binary-looking files that happened to have a text extension.
+        if bytes.contains(&0) {
+            return Err("File contains binary data and cannot be attached as text.".to_string());
+        }
+    }
     let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
     let name = path_buf
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| "image".to_string());
+        .unwrap_or_else(|| "file".to_string());
 
-    Ok(ImageAttachment { mime_type, data, name })
+    Ok(FileAttachment { mime_type, data, name })
 }
 
 const RELEVANT_HISTORY_EVENT_TYPES: &[&str] = &[
@@ -255,9 +296,9 @@ async fn start_zero_session(
 async fn send_zero_message(
     state: tauri::State<'_, Arc<ZeroBridge>>,
     content: String,
-    image: Option<ImageAttachment>,
+    file: Option<FileAttachment>,
 ) -> Result<(), String> {
-    state.send(content, image).await
+    state.send(content, file).await
 }
 
 #[tauri::command]
@@ -308,7 +349,7 @@ pub fn run() {
             load_session_history,
             delete_session,
             rename_session,
-            read_image_attachment
+            read_file_attachment
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use base64::Engine;
 use tauri::Emitter;
 use tokio::fs::OpenOptions;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -10,7 +11,7 @@ use tokio::sync::Mutex;
 
 use crate::acp::{parse_line, AcpMessage, AcpPeer};
 use crate::locator::locate_zero;
-use crate::ImageAttachment;
+use crate::{AttachmentKind, FileAttachment};
 
 /// Events emitted to the frontend on `zero:event`. Kept in the same shape
 /// zero's old stream-json protocol used ({schemaVersion, type, ...payload})
@@ -64,19 +65,55 @@ fn extract_tool_result_text(content: Option<&serde_json::Value>) -> String {
 /// Builds the `prompt` content-block array for `session/prompt` (ACP:
 /// `[{"type":"text",...}, {"type":"image",...}]`). The text block is
 /// omitted for an image-only message instead of sending an empty string.
-fn build_prompt_blocks(content: &str, image: Option<&ImageAttachment>) -> Vec<serde_json::Value> {
+fn build_prompt_blocks(content: &str, file: Option<&FileAttachment>) -> Vec<serde_json::Value> {
     let mut blocks = Vec::new();
     if !content.is_empty() {
         blocks.push(serde_json::json!({ "type": "text", "text": content }));
     }
-    if let Some(img) = image {
-        blocks.push(serde_json::json!({
-            "type": "image",
-            "mimeType": img.mime_type,
-            "data": img.data,
-        }));
+    if let Some(file) = file {
+        if let Some(kind) = attachment_kind_from_mime(&file.mime_type) {
+            match kind {
+                AttachmentKind::Image => {
+                    blocks.push(serde_json::json!({
+                        "type": "image",
+                        "mimeType": file.mime_type,
+                        "data": file.data,
+                    }));
+                }
+                AttachmentKind::Text => {
+                    if let Ok(text) = base64_decode_to_string(&file.data) {
+                        blocks.push(serde_json::json!({
+                            "type": "text",
+                            "text": format!("<attached file name=\"{}\" type=\"{}\">\n{}\n</attached file>",
+                                file.name, file.mime_type, text),
+                        }));
+                    }
+                }
+            }
+        }
     }
     blocks
+}
+
+fn attachment_kind_from_mime(mime_type: &str) -> Option<AttachmentKind> {
+    if mime_type.starts_with("image/") {
+        Some(AttachmentKind::Image)
+    } else if mime_type.starts_with("text/")
+        || mime_type == "application/json"
+        || mime_type == "application/yaml"
+        || mime_type == "application/xml"
+    {
+        Some(AttachmentKind::Text)
+    } else {
+        None
+    }
+}
+
+fn base64_decode_to_string(data: &str) -> Result<String, String> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .map_err(|e| format!("Failed to decode attachment: {e}"))?;
+    String::from_utf8(bytes).map_err(|e| format!("Attachment is not valid UTF-8: {e}"))
 }
 
 /// Translate an ACP `session/update` notification's `params` into our
@@ -735,18 +772,18 @@ impl ZeroBridge {
     /// turn ends) and returns immediately - progress is tracked via
     /// `zero:event`/`zero:permission-request`, same as the app already
     /// expects.
-    pub async fn send(&self, content: String, image: Option<ImageAttachment>) -> Result<(), String> {
+    pub async fn send(&self, content: String, file: Option<FileAttachment>) -> Result<(), String> {
         let (peer, session_id, history_path) = self.ensure_live().await?;
 
         // First message of a session (no title recorded yet) gives it a
         // real name instead of zero's generic "ACP session" default - there
         // is no discovered ACP method to set the title on zero's side, so
         // zero-desktop tracks it locally and overlays it in list_zero_sessions.
-        // An image-only message (empty content) falls back to the image's
+        // A file-only message (empty content) falls back to the file's
         // filename instead of deriving a title from an empty string.
         if get_session_title(&session_id).is_none() {
             let title_source = if content.trim().is_empty() {
-                image.as_ref().map(|i| i.name.clone()).unwrap_or_default()
+                file.as_ref().map(|f| f.name.clone()).unwrap_or_default()
             } else {
                 content.clone()
             };
@@ -756,15 +793,15 @@ impl ZeroBridge {
         // The user's own turn was never persisted before - only the agent's
         // side went through `spawn_stdout_reader`. Without this, replaying a
         // session's history showed the agent's tool calls/reasoning with no
-        // record of what was actually asked. The `image` key is only added
+        // record of what was actually asked. The `file` key is only added
         // when present, so text-only history entries stay identical to
         // before this field existed.
         let mut message_payload = serde_json::json!({ "role": "user", "content": content.clone() });
-        if let Some(ref img) = image {
-            message_payload["image"] = serde_json::json!({
-                "mimeType": img.mime_type,
-                "data": img.data,
-                "name": img.name,
+        if let Some(ref f) = file {
+            message_payload["file"] = serde_json::json!({
+                "mimeType": f.mime_type,
+                "data": f.data,
+                "name": f.name,
             });
         }
         append_history(&history_path, "message", &message_payload).await;
@@ -776,7 +813,7 @@ impl ZeroBridge {
                     "session/prompt",
                     serde_json::json!({
                         "sessionId": session_id,
-                        "prompt": build_prompt_blocks(&content, image.as_ref()),
+                        "prompt": build_prompt_blocks(&content, file.as_ref()),
                     }),
                 )
                 .await;

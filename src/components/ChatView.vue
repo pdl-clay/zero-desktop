@@ -234,11 +234,11 @@ watch(
   },
 );
 
-async function onSend({ content, image }) {
-  if (!canSend.value || (!content && !image)) return;
+async function onSend({ content, file }) {
+  if (!canSend.value || (!content && !file)) return;
 
   input.value = "";
-  await zeroStore.sendMessage(content, image);
+  await zeroStore.sendMessage(content, file);
 }
 
 function onKeydown(event) {

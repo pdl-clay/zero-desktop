@@ -31,12 +31,24 @@
       <span class="chat-input__status-dot" />
       <span class="chat-input__status-label">{{ statusLabel }}</span>
     </div>
-    <div v-if="attachedImage" class="chat-input__attachment">
-      <div class="chat-input__thumb-wrap">
-        <img :src="attachedImage.previewUrl" :alt="attachedImage.name" class="chat-input__thumb" />
-        <button type="button" class="chat-input__thumb-remove" @click="removeAttachedImage">
+    <div v-if="attachedFile" class="chat-input__attachment">
+      <div class="chat-input__file-wrap">
+        <img
+          v-if="attachedFile.previewUrl"
+          :src="attachedFile.previewUrl"
+          :alt="attachedFile.name"
+          class="chat-input__thumb"
+        />
+        <div v-else class="chat-input__file-chip row items-center">
+          <q-icon :name="fileIcon" size="20px" class="q-mr-sm" />
+          <div class="chat-input__file-info column">
+            <span class="chat-input__file-name">{{ attachedFile.name }}</span>
+            <span class="chat-input__file-meta">{{ attachedFile.mimeType }}</span>
+          </div>
+        </div>
+        <button type="button" class="chat-input__thumb-remove" @click="removeAttachedFile">
           <q-icon name="close" size="12px" />
-          <q-tooltip>{{ t("chat.removeImage") }}</q-tooltip>
+          <q-tooltip>{{ t("chat.removeAttachment") }}</q-tooltip>
         </button>
       </div>
     </div>
@@ -44,11 +56,11 @@
       <button
         type="button"
         class="chat-input__attach"
-        :disabled="disabled || pickingImage"
-        @click="pickImage"
+        :disabled="disabled || pickingFile"
+        @click="pickFile"
       >
         <q-icon name="attach_file" size="18px" />
-        <q-tooltip>{{ t("chat.attachImage") }}</q-tooltip>
+        <q-tooltip>{{ t("chat.attachFile") }}</q-tooltip>
       </button>
       <textarea
         ref="textareaRef"
@@ -86,8 +98,9 @@ import { useQuasar } from "quasar";
 import { useI18n } from "vue-i18n";
 import { open } from "@tauri-apps/plugin-dialog";
 import { planIcon, planColor } from "@/utils/plan";
-import { readImageAttachment } from "@/services/zero";
+import { readFileAttachment } from "@/services/zero";
 import { base64ToObjectUrl, base64ToDataUri } from "@/utils/image";
+import { isImageMimeType, isTextMimeType, getFileIcon } from "@/utils/file";
 import { useZeroStore } from "@/stores/zero-store";
 
 const props = defineProps({
@@ -106,8 +119,8 @@ const { t } = useI18n();
 const zeroStore = useZeroStore();
 const textareaRef = ref(null);
 const focused = ref(false);
-const attachedImage = ref(null);
-const pickingImage = ref(false);
+const attachedFile = ref(null);
+const pickingFile = ref(false);
 
 const localValue = computed({
   get: () => props.modelValue,
@@ -115,7 +128,13 @@ const localValue = computed({
 });
 
 const canSubmit = computed(
-  () => !props.disabled && (props.modelValue.trim().length > 0 || !!attachedImage.value),
+  () => !props.disabled && (props.modelValue.trim().length > 0 || !!attachedFile.value),
+);
+
+const fileIcon = computed(() =>
+  attachedFile.value
+    ? getFileIcon(attachedFile.value.mimeType, attachedFile.value.name)
+    : "insert_drive_file",
 );
 
 const statusLabel = computed(() => {
@@ -160,9 +179,9 @@ function onEnterKey(event) {
   submit();
 }
 
-function releaseAttachedImagePreview() {
-  if (attachedImage.value?.previewUrl) {
-    URL.revokeObjectURL(attachedImage.value.previewUrl);
+function releaseAttachedFilePreview() {
+  if (attachedFile.value?.previewUrl) {
+    URL.revokeObjectURL(attachedFile.value.previewUrl);
   }
 }
 
@@ -170,54 +189,100 @@ function submit() {
   if (!canSubmit.value) return;
   emit("send", {
     content: props.modelValue.trim(),
-    image: attachedImage.value
+    file: attachedFile.value
       ? {
-          mimeType: attachedImage.value.mimeType,
-          data: attachedImage.value.data,
-          name: attachedImage.value.name,
+          mimeType: attachedFile.value.mimeType,
+          data: attachedFile.value.data,
+          name: attachedFile.value.name,
         }
       : null,
   });
-  releaseAttachedImagePreview();
-  attachedImage.value = null;
+  releaseAttachedFilePreview();
+  attachedFile.value = null;
   nextTick(autoResize);
 }
 
-async function pickImage() {
+const ATTACHMENT_EXTENSIONS = [
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "txt",
+  "md",
+  "csv",
+  "json",
+  "yaml",
+  "yml",
+  "xml",
+  "html",
+  "htm",
+  "css",
+  "js",
+  "ts",
+  "jsx",
+  "tsx",
+  "py",
+  "go",
+  "rs",
+  "java",
+  "kt",
+  "swift",
+  "c",
+  "cpp",
+  "cc",
+  "cxx",
+  "h",
+  "hpp",
+  "rb",
+  "php",
+  "sh",
+  "sql",
+  "dockerfile",
+];
+
+async function pickFile() {
   const selected = await open({
     multiple: false,
-    title: t("chat.attachImageTitle"),
-    filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp"] }],
+    title: t("chat.attachFileTitle"),
+    filters: [
+      {
+        name: "Supported files",
+        extensions: ATTACHMENT_EXTENSIONS,
+      },
+    ],
   });
   if (!selected) return;
 
-  pickingImage.value = true;
+  pickingFile.value = true;
   try {
-    const attachment = await readImageAttachment(selected);
-    releaseAttachedImagePreview();
-    let previewUrl;
-    try {
-      previewUrl = base64ToObjectUrl(attachment.data, attachment.mimeType);
-    } catch {
-      previewUrl = base64ToDataUri(attachment.data, attachment.mimeType);
+    const attachment = await readFileAttachment(selected);
+    releaseAttachedFilePreview();
+    let previewUrl = null;
+    if (isImageMimeType(attachment.mimeType)) {
+      try {
+        previewUrl = base64ToObjectUrl(attachment.data, attachment.mimeType);
+      } catch {
+        previewUrl = base64ToDataUri(attachment.data, attachment.mimeType);
+      }
     }
-    attachedImage.value = {
+    attachedFile.value = {
       ...attachment,
       previewUrl,
     };
   } catch (error) {
     zeroStore.zeroError = error;
   } finally {
-    pickingImage.value = false;
+    pickingFile.value = false;
   }
 }
 
-function removeAttachedImage() {
-  releaseAttachedImagePreview();
-  attachedImage.value = null;
+function removeAttachedFile() {
+  releaseAttachedFilePreview();
+  attachedFile.value = null;
 }
 
-onBeforeUnmount(releaseAttachedImagePreview);
+onBeforeUnmount(releaseAttachedFilePreview);
 
 function onCancel() {
   emit("cancel");
@@ -315,11 +380,17 @@ defineExpose({ focus: () => textareaRef.value?.focus() });
   padding: 10px 16px 0;
 }
 
-.chat-input__thumb-wrap {
+.chat-input__file-wrap {
   position: relative;
   display: inline-flex;
-  width: 48px;
-  height: 48px;
+  align-items: center;
+}
+
+.chat-input__thumb-wrap,
+.chat-input__file-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
 }
 
 .chat-input__thumb {
@@ -328,6 +399,37 @@ defineExpose({ focus: () => textareaRef.value?.focus() });
   border-radius: 10px;
   object-fit: cover;
   border: 1px solid rgba(128, 128, 128, 0.25);
+}
+
+.chat-input__file-chip {
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: rgba(128, 128, 128, 0.12);
+  border: 1px solid rgba(128, 128, 128, 0.2);
+  color: var(--chat-text);
+  max-width: 260px;
+}
+
+.chat-input__file-info {
+  min-width: 0;
+}
+
+.chat-input__file-name {
+  font-size: 0.85em;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+.chat-input__file-meta {
+  font-size: 0.72em;
+  color: var(--chat-text-muted, rgba(128, 128, 128, 0.8));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
 }
 
 .chat-input__thumb-remove {
