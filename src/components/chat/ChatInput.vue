@@ -81,12 +81,13 @@
 </template>
 
 <script setup>
-import { ref, computed, nextTick, watch } from "vue";
+import { ref, computed, nextTick, watch, onBeforeUnmount } from "vue";
 import { useQuasar } from "quasar";
 import { useI18n } from "vue-i18n";
 import { open } from "@tauri-apps/plugin-dialog";
 import { planIcon, planColor } from "@/utils/plan";
 import { readImageAttachment } from "@/services/zero";
+import { base64ToObjectUrl, base64ToDataUri } from "@/utils/image";
 import { useZeroStore } from "@/stores/zero-store";
 
 const props = defineProps({
@@ -159,6 +160,12 @@ function onEnterKey(event) {
   submit();
 }
 
+function releaseAttachedImagePreview() {
+  if (attachedImage.value?.previewUrl) {
+    URL.revokeObjectURL(attachedImage.value.previewUrl);
+  }
+}
+
 function submit() {
   if (!canSubmit.value) return;
   emit("send", {
@@ -171,6 +178,7 @@ function submit() {
         }
       : null,
   });
+  releaseAttachedImagePreview();
   attachedImage.value = null;
   nextTick(autoResize);
 }
@@ -186,9 +194,16 @@ async function pickImage() {
   pickingImage.value = true;
   try {
     const attachment = await readImageAttachment(selected);
+    releaseAttachedImagePreview();
+    let previewUrl;
+    try {
+      previewUrl = base64ToObjectUrl(attachment.data, attachment.mimeType);
+    } catch {
+      previewUrl = base64ToDataUri(attachment.data, attachment.mimeType);
+    }
     attachedImage.value = {
       ...attachment,
-      previewUrl: `data:${attachment.mimeType};base64,${attachment.data}`,
+      previewUrl,
     };
   } catch (error) {
     zeroStore.zeroError = error;
@@ -198,8 +213,11 @@ async function pickImage() {
 }
 
 function removeAttachedImage() {
+  releaseAttachedImagePreview();
   attachedImage.value = null;
 }
+
+onBeforeUnmount(releaseAttachedImagePreview);
 
 function onCancel() {
   emit("cancel");

@@ -18,8 +18,9 @@
 </template>
 
 <script setup>
-import { computed } from "vue";
+import { computed, onBeforeUnmount } from "vue";
 import { renderMarkdown } from "@/utils/markdown";
+import { base64ToObjectUrl, base64ToDataUri } from "@/utils/image";
 
 const props = defineProps({
   message: { type: Object, required: true },
@@ -31,11 +32,26 @@ const renderedText = computed(() =>
   isMarkdown.value ? renderMarkdown(props.message.content) : props.message.content,
 );
 
-const imageSrc = computed(() =>
-  props.message.image
-    ? `data:${props.message.image.mimeType};base64,${props.message.image.data}`
-    : null,
-);
+// message.image is set once when the message is created and never mutated
+// afterward, and this component is keyed by message.id (one instance per
+// message - see ChatView.vue), so the object URL only ever needs creating
+// once and revoking when this instance goes away.
+let createdImageUrl = null;
+const imageSrc = computed(() => {
+  if (!props.message.image) return null;
+  if (!createdImageUrl) {
+    try {
+      createdImageUrl = base64ToObjectUrl(props.message.image.data, props.message.image.mimeType);
+    } catch {
+      createdImageUrl = base64ToDataUri(props.message.image.data, props.message.image.mimeType);
+    }
+  }
+  return createdImageUrl;
+});
+
+onBeforeUnmount(() => {
+  if (createdImageUrl) URL.revokeObjectURL(createdImageUrl);
+});
 
 // Backgrounds for user/assistant are handled entirely via the .chat-bubble-*
 // classes below (translucent, theme-aware) instead of Quasar's bg-color
