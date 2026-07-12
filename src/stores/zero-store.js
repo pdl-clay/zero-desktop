@@ -15,6 +15,8 @@ import {
   deleteSession,
   renameSession,
   respondToPermission as respondToPermissionApi,
+  listZeroModels,
+  switchZeroModel,
 } from "@/services/zero";
 
 const MAX_STDERR_LINES = 20;
@@ -49,6 +51,10 @@ export const useZeroStore = defineStore("zero", {
     _cancelledByUser: false,
     _sessionSyncTimer: null,
     _lastEventCount: 0,
+    availableModels: [],
+    activeModel: null,
+    isLoadingModels: false,
+    _modelsLoaded: false,
   }),
 
   getters: {
@@ -159,6 +165,37 @@ export const useZeroStore = defineStore("zero", {
         await cancelZeroRun();
       } catch (error) {
         this._cancelledByUser = false;
+        this.zeroError = error;
+      }
+    },
+
+    async loadAvailableModels({ force = false } = {}) {
+      if (this._modelsLoaded && !force) return;
+      this.isLoadingModels = true;
+      try {
+        const { models, active } = await listZeroModels();
+        this.availableModels = models;
+        this.activeModel = active;
+        this._modelsLoaded = true;
+      } catch (error) {
+        this.zeroError = error;
+      } finally {
+        this.isLoadingModels = false;
+      }
+    },
+
+    // Killing the live process here (inside switchZeroModel, on the Rust
+    // side) is silent as long as no turn is in progress - handleProcessExited
+    // early-returns when !runInProgress - so switching mid-turn would
+    // otherwise surface a spurious "connection lost" error. Guarded here too,
+    // not just via the picker's disabled state, since this action is the
+    // actual point of no return.
+    async switchModel(model) {
+      if (model === this.activeModel || this.runInProgress) return;
+      try {
+        await switchZeroModel(model);
+        this.activeModel = model;
+      } catch (error) {
         this.zeroError = error;
       }
     },

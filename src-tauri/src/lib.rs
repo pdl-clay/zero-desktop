@@ -312,6 +312,20 @@ async fn cancel_zero_run(state: tauri::State<'_, Arc<ZeroBridge>>) -> Result<(),
 }
 
 #[tauri::command]
+async fn list_zero_models() -> Result<bridge::AvailableModels, String> {
+    bridge::fetch_available_models().await
+}
+
+#[tauri::command]
+async fn switch_zero_model(
+    state: tauri::State<'_, Arc<ZeroBridge>>,
+    model: String,
+) -> Result<(), String> {
+    bridge::switch_active_model(&model).await?;
+    state.cancel().await
+}
+
+#[tauri::command]
 async fn respond_to_permission(
     state: tauri::State<'_, Arc<ZeroBridge>>,
     request_id: String,
@@ -349,7 +363,9 @@ pub fn run() {
             load_session_history,
             delete_session,
             rename_session,
-            read_file_attachment
+            read_file_attachment,
+            list_zero_models,
+            switch_zero_model
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

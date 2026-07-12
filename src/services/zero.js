@@ -55,6 +55,30 @@ export async function cancelZeroRun() {
 }
 
 /**
+ * List the active provider's live model list plus which one is active. A
+ * real network probe against the provider's own model-listing endpoint (per
+ * zero's own docs) - call on demand, not on every session start.
+ * @returns {Promise<{ models: string[], active: string }>}
+ */
+export async function listZeroModels() {
+  return invoke("list_zero_models");
+}
+
+/**
+ * Switch the active provider's model. A global, persisted zero CLI/config
+ * change, not a per-session one - the ACP transport has no method for this
+ * (verified live: session/set_model and session/models both return "method
+ * not found"), so it affects every zero process on this machine. Kills the
+ * current live zero acp process so the next message respawns under the new
+ * model; session id and history are preserved via the existing
+ * session/load reattach path.
+ * @param {string} model - id as returned by listZeroModels()
+ */
+export async function switchZeroModel(model) {
+  return invoke("switch_zero_model", { model });
+}
+
+/**
  * Listen for zero stream-json events.
  * @param {(event: { event: string, payload: any }) => void} callback
  * @returns {Promise<() => void>}

@@ -361,11 +361,25 @@ pub fn remove_session_model(session_id: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Best-effort read of the currently active provider's model via `zero
-/// config --json`. Used to snapshot which model is answering a session at
-/// creation time, since nothing in `zero sessions list` or the ACP protocol
-/// reports it after the fact.
-async fn active_model_id() -> Option<String> {
+/// The active provider's live model list, for the model picker.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AvailableModels {
+    pub models: Vec<String>,
+    pub active: String,
+}
+
+/// Active provider's `name` and `model` via `zero config --json`. `name`
+/// doubles as the `<catalog-id>` argument `zero providers add` expects when
+/// updating an existing profile - verified live (`zero providers add
+/// opencode-go --name opencode-go --model <x> --set-active` updates the
+/// profile in place, no duplicate created) for a profile that was created
+/// without an explicit `--name`, which is zero's default. Neither `zero
+/// config --json`, `zero providers current --json`, nor `zero providers
+/// list --json` expose the real `catalogID` field at all (checked all
+/// three) - it only exists in `~/.config/zero/config.json` itself - so if a
+/// renamed profile ever breaks this assumption, that file is the fallback
+/// source, not another CLI flag.
+async fn active_provider_entry() -> Option<(String, String)> {
     let zero_path = locate_zero().ok()?.path;
     let output = Command::new(&zero_path)
         .arg("config")
@@ -377,13 +391,96 @@ async fn active_model_id() -> Option<String> {
         return None;
     }
     let value: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
-    let active_provider = value["activeProvider"].as_str()?;
-    value["providers"]
+    let active_provider = value["activeProvider"].as_str()?.to_string();
+    let model = value["providers"]
         .as_array()?
         .iter()
-        .find(|p| p["name"].as_str() == Some(active_provider))
-        .and_then(|p| p["model"].as_str())
-        .map(|s| s.to_string())
+        .find(|p| p["name"].as_str() == Some(active_provider.as_str()))
+        .and_then(|p| p["model"].as_str())?
+        .to_string();
+    Some((active_provider, model))
+}
+
+/// Best-effort read of the currently active provider's model. Used to
+/// snapshot which model is answering a session, since nothing in `zero
+/// sessions list` or the ACP protocol reports it after the fact.
+async fn active_model_id() -> Option<String> {
+    active_provider_entry().await.map(|(_, model)| model)
+}
+
+/// The active provider's live model list (a real network probe against the
+/// provider's own `/v1/models`-style endpoint - not instant, not cached, per
+/// `zero providers models`'s own help text) plus which one is active.
+pub async fn fetch_available_models() -> Result<AvailableModels, String> {
+    let (provider_name, active_model) = active_provider_entry()
+        .await
+        .ok_or_else(|| "Failed to resolve the active zero provider".to_string())?;
+
+    let zero_path = locate_zero()
+        .map_err(|e| format!("Failed to locate zero CLI: {e}"))?
+        .path;
+    let output = Command::new(&zero_path)
+        .arg("providers")
+        .arg("models")
+        .arg(&provider_name)
+        .arg("--json")
+        .output()
+        .await
+        .map_err(|e| format!("Failed to run zero providers models: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("zero providers models failed: {stderr}"));
+    }
+
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("Failed to parse providers models JSON: {e}"))?;
+    let models = value["models"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|m| m["id"].as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Ok(AvailableModels { models, active: active_model })
+}
+
+/// Switches the active provider's model. This is a global, persisted zero
+/// CLI/config change, not a per-session ACP call - verified live that ACP
+/// has no such method (`session/set_model`/`session/models` both return
+/// "method not found"), no env var influences it, and `zero acp` rejects an
+/// unknown `--model` flag outright. Affects every `zero` process on this
+/// machine, not just this app. Caller is responsible for restarting the
+/// live process (see `ZeroBridge::cancel`) so the next turn picks up the
+/// change - this function only performs the CLI mutation.
+pub async fn switch_active_model(model: &str) -> Result<(), String> {
+    let (provider_name, _) = active_provider_entry()
+        .await
+        .ok_or_else(|| "Failed to resolve the active zero provider".to_string())?;
+
+    let zero_path = locate_zero()
+        .map_err(|e| format!("Failed to locate zero CLI: {e}"))?
+        .path;
+    let output = Command::new(&zero_path)
+        .arg("providers")
+        .arg("add")
+        .arg(&provider_name)
+        .arg("--name")
+        .arg(&provider_name)
+        .arg("--model")
+        .arg(model)
+        .arg("--set-active")
+        .output()
+        .await
+        .map_err(|e| format!("Failed to run zero providers add: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("Failed to switch model: {stderr}"));
+    }
+
+    Ok(())
 }
 
 fn derive_title_from_message(content: &str) -> String {
@@ -541,6 +638,16 @@ impl ZeroBridge {
             }
         };
 
+        // Snapshotted here (after every successful handshake - session/new,
+        // session/load, or session/load-failed-so-fell-back-to-session/new)
+        // rather than only inside session_new(), so a respawn after a model
+        // switch (see ZeroBridge::cancel/switch_active_model) re-snapshots
+        // too - otherwise the session list would keep showing the model that
+        // was active when the session was first created.
+        if let Some(model_id) = active_model_id().await {
+            let _ = set_session_model(&session_id, &model_id);
+        }
+
         Ok((child, peer, session_id))
     }
 
@@ -552,16 +659,10 @@ impl ZeroBridge {
             )
             .await
             .map_err(|e| format!("session/new failed: {e}"))?;
-        let session_id = result["sessionId"]
+        result["sessionId"]
             .as_str()
             .map(|s| s.to_string())
-            .ok_or_else(|| "session/new response missing sessionId".to_string())?;
-
-        if let Some(model_id) = active_model_id().await {
-            let _ = set_session_model(&session_id, &model_id);
-        }
-
-        Ok(session_id)
+            .ok_or_else(|| "session/new response missing sessionId".to_string())
     }
 
     /// The only task reading a process's stdout. Resolves responses to our
@@ -1001,8 +1102,8 @@ mod tests {
         assert_eq!(parsed.payload["delta"], original.payload["delta"]);
     }
 
-    fn test_image() -> ImageAttachment {
-        ImageAttachment {
+    fn test_image() -> FileAttachment {
+        FileAttachment {
             mime_type: "image/png".to_string(),
             data: "iVBORw0KGgo=".to_string(),
             name: "screenshot.png".to_string(),
