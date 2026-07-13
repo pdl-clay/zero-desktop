@@ -104,6 +104,19 @@
           <q-btn flat round dense icon="settings" color="grey-7" size="sm" class="q-mt-xs q-mb-xs">
             <q-tooltip>{{ $t("settings.title") }}</q-tooltip>
           </q-btn>
+
+          <q-btn
+            flat
+            round
+            dense
+            icon="dns"
+            color="grey-7"
+            size="sm"
+            class="q-mt-xs q-mb-xs"
+            @click="mcpDrawerRef?.toggle()"
+          >
+            <q-tooltip>{{ $t("mcp.title") }}</q-tooltip>
+          </q-btn>
         </div>
         <!-- Right session panel -->
         <div
@@ -274,6 +287,8 @@
       </q-page>
       <ChatView v-else :workspace-path="workspacesStore.activePath" @focus-input="onFocusInput" />
     </q-page-container>
+
+    <McpDrawer ref="mcpDrawerRef" />
   </q-layout>
 </template>
 
@@ -285,12 +300,14 @@ import { useZeroStore } from "@/stores/zero-store";
 import { useWorkspacesStore } from "@/stores/workspaces-store";
 import { open } from "@tauri-apps/plugin-dialog";
 import ChatView from "@/components/ChatView.vue";
+import McpDrawer from "@/components/McpDrawer.vue";
 
 const $q = useQuasar();
 const { t } = useI18n();
 const zeroStore = useZeroStore();
 const workspacesStore = useWorkspacesStore();
 const leftDrawerOpen = ref(true);
+const mcpDrawerRef = ref(null);
 
 const isSmallScreen = $q.screen.lt.md;
 const sessionPanelOpen = ref(!isSmallScreen);

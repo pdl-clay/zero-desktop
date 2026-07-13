@@ -17,6 +17,8 @@ import {
   respondToPermission as respondToPermissionApi,
   listZeroModels,
   switchZeroModel,
+  listMcpBackends,
+  checkMcpBackend,
 } from "@/services/zero";
 
 const MAX_STDERR_LINES = 20;
@@ -55,6 +57,10 @@ export const useZeroStore = defineStore("zero", {
     activeModel: null,
     isLoadingModels: false,
     _modelsLoaded: false,
+    permissionMode: "ask",
+    mcpBackends: [],
+    isLoadingMcp: false,
+    _mcpLoaded: false,
   }),
 
   getters: {
@@ -343,9 +349,21 @@ export const useZeroStore = defineStore("zero", {
             this.addPermissionRequest({ ...payload, answerable: false });
             break;
 
-          case "permission_decision":
-            this.addPermissionDecision(payload);
+          case "permission_decision": {
+            // Correlate back onto the request this decision answers, so a
+            // permission the user actually approved/denied in time renders
+            // with that outcome instead of falling back to "expired" just
+            // because the replayed request itself is marked unanswerable.
+            const answered = this.messages.find(
+              (m) => m.type === "permission_request" && m.requestId === payload.requestId,
+            );
+            if (answered) {
+              answered.status = payload.action === "deny" ? "denied" : "approved";
+            } else {
+              this.addPermissionDecision(payload);
+            }
             break;
+          }
 
           case "error":
             this.messages.push({
@@ -364,12 +382,15 @@ export const useZeroStore = defineStore("zero", {
 
     async removeSession(sessionId) {
       try {
-        await deleteSession(sessionId);
+        // If deleting the current session, stop the running process first
+        // so it stops writing to the session directory before we delete it.
         if (this.currentSessionId === sessionId) {
+          await this.stopSession();
           this.currentSessionId = null;
           this.messages = [];
-          this._stopSessionSync();
+          this.currentPlan = [];
         }
+        await deleteSession(sessionId);
         if (this.currentWorkspace) {
           await this.loadSessions(this.currentWorkspace);
         }
@@ -410,8 +431,16 @@ export const useZeroStore = defineStore("zero", {
       });
 
       this.unlistenPermissionRequest = await onZeroPermissionRequest((event) => {
+        console.log("[zero-store] permission request received:", event.payload);
         this.finalizeThinking();
         this.addPermissionRequest(event.payload);
+        if (this.permissionMode === "auto_allow") {
+          const allowOption = event.payload.options?.find((o) => o.optionId === "allow");
+          if (allowOption) {
+            console.log("[zero-store] auto-allow responding:", event.payload.requestId);
+            this.respondToPermission(event.payload.requestId, "allow");
+          }
+        }
       });
     },
 
@@ -629,7 +658,7 @@ export const useZeroStore = defineStore("zero", {
       this.messages.push({
         id: nextId(),
         type: "permission_decision",
-        toolName: event.name,
+        toolName: event.name || event.toolName,
         action: event.action,
         reason: event.reason || "",
         riskLevel: event.risk?.level || "",
@@ -638,17 +667,65 @@ export const useZeroStore = defineStore("zero", {
     },
 
     async respondToPermission(requestId, optionId) {
+      console.log("[zero-store] respondToPermission called:", requestId, optionId);
       const msg = this.messages.find(
         (m) =>
           m.type === "permission_request" && m.requestId === requestId && m.status === "pending",
       );
-      if (!msg) return;
+      if (!msg) {
+        console.warn("[zero-store] no pending permission message found for", requestId);
+        return;
+      }
       msg.status = optionId.startsWith("allow") ? "approved" : "denied";
       msg.chosenOptionId = optionId;
       try {
         await respondToPermissionApi(requestId, optionId);
+        console.log("[zero-store] permission response sent:", requestId, optionId);
       } catch (error) {
+        console.error("[zero-store] permission response failed:", error);
         this.zeroError = error;
+      }
+    },
+
+    setPermissionMode(mode) {
+      this.permissionMode = mode === "auto_allow" ? "auto_allow" : "ask";
+    },
+
+    async loadMcpBackends({ force = false } = {}) {
+      if (this._mcpLoaded && !force) return;
+      this.isLoadingMcp = true;
+      try {
+        this.mcpBackends = await listMcpBackends();
+        this._mcpLoaded = true;
+      } catch {
+        this.mcpBackends = [];
+      } finally {
+        this.isLoadingMcp = false;
+      }
+    },
+
+    async checkMcpBackend(name) {
+      const backend = this.mcpBackends.find((b) => b.name === name);
+      if (backend) {
+        backend._checking = true;
+      }
+      try {
+        const result = await checkMcpBackend(name);
+        if (backend) {
+          backend.status = result.status;
+          backend.toolCount = result.tool_count;
+          backend.tools = result.tools || [];
+          backend._error = result.error || null;
+        }
+      } catch (err) {
+        if (backend) {
+          backend.status = "error";
+          backend._error = String(err);
+        }
+      } finally {
+        if (backend) {
+          backend._checking = false;
+        }
       }
     },
   },

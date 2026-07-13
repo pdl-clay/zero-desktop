@@ -162,3 +162,21 @@ export async function respondToPermission(requestId, optionId) {
 export async function onZeroPermissionRequest(callback) {
   return listen("zero:permission-request", callback);
 }
+
+/**
+ * List configured MCP and hook backends from zero's config.
+ * Fast, read-only — no connections attempted.
+ * @returns {Promise<Array<{ name: string, type: string, url: string|null, toolCount: number, headerCount: number }>>}
+ */
+export async function listMcpBackends() {
+  return invoke("list_mcp_backends");
+}
+
+/**
+ * Live-check a single MCP server: connects, lists tools, reports status.
+ * @param {string} name - server name as in zero config
+ * @returns {Promise<{ serverName: string, status: string, toolCount: number, tools: Array }>}
+ */
+export async function checkMcpBackend(name) {
+  return invoke("check_mcp_backend", { name });
+}

@@ -55,78 +55,6 @@
     <div class="chat-input__row">
       <button
         type="button"
-        class="chat-input__model"
-        :class="{ 'chat-input__model--active': zeroStore.activeModel }"
-        :disabled="disabled"
-      >
-        <q-icon name="memory" size="14px" />
-        <span class="chat-input__model-label">{{
-          zeroStore.activeModel || t("chat.modelLabel")
-        }}</span>
-        <q-icon
-          name="expand_more"
-          size="14px"
-          class="chat-input__model-chevron"
-          :class="{ 'chat-input__model-chevron--open': modelMenuOpen }"
-        />
-        <q-menu
-          :offset="[0, 8]"
-          class="chat-input__model-menu"
-          @show="onModelMenuShow"
-          @hide="modelMenuOpen = false"
-        >
-          <div class="chat-input__model-menu-inner">
-            <div class="chat-input__model-header row items-center justify-between">
-              <span>{{ t("chat.switchModel") }}</span>
-              <q-icon name="memory" size="14px" color="grey-6" />
-            </div>
-            <q-separator class="chat-input__model-separator" />
-            <q-list dense class="chat-input__model-list">
-              <q-item
-                v-for="m in zeroStore.availableModels"
-                :key="m"
-                clickable
-                v-close-popup
-                :active="m === zeroStore.activeModel"
-                class="chat-input__model-item"
-                @click="zeroStore.switchModel(m)"
-              >
-                <q-item-section avatar class="chat-input__model-item-avatar">
-                  <q-icon
-                    v-if="m === zeroStore.activeModel"
-                    name="check_circle"
-                    size="18px"
-                    color="primary"
-                  />
-                  <q-icon v-else name="radio_button_unchecked" size="18px" color="grey-6" />
-                </q-item-section>
-                <q-item-section>
-                  <q-item-label class="chat-input__model-name">{{ m }}</q-item-label>
-                </q-item-section>
-              </q-item>
-              <q-item v-if="zeroStore.isLoadingModels" dense class="chat-input__model-status">
-                <q-item-section avatar>
-                  <q-spinner-dots size="18px" color="primary" />
-                </q-item-section>
-                <q-item-section>{{ t("chat.loadingModels") }}</q-item-section>
-              </q-item>
-              <q-item
-                v-else-if="zeroStore.availableModels.length === 0"
-                dense
-                class="chat-input__model-status"
-              >
-                <q-item-section avatar>
-                  <q-icon name="error_outline" size="18px" color="grey-6" />
-                </q-item-section>
-                <q-item-section>{{ t("chat.noModelsFound") }}</q-item-section>
-              </q-item>
-            </q-list>
-          </div>
-        </q-menu>
-        <q-tooltip>{{ t("chat.switchModel") }}</q-tooltip>
-      </button>
-      <button
-        type="button"
         class="chat-input__attach"
         :disabled="disabled || pickingFile"
         @click="pickFile"
@@ -134,6 +62,130 @@
         <q-icon name="attach_file" size="18px" />
         <q-tooltip>{{ t("chat.attachFile") }}</q-tooltip>
       </button>
+      <button
+        type="button"
+        class="chat-input__mode"
+        :class="{
+          'chat-input__mode--active': zeroStore.permissionMode === 'auto_allow',
+          'chat-input__mode--collapsed': isNarrowViewport,
+        }"
+        :disabled="disabled"
+        @click="togglePermissionMode"
+      >
+        <q-icon
+          :name="zeroStore.permissionMode === 'auto_allow' ? 'check_circle' : 'help_outline'"
+          size="14px"
+        />
+        <span class="chat-input__mode-label">{{ permissionModeLabel }}</span>
+      </button>
+      <div class="chat-input__model-wrap">
+        <button
+          type="button"
+          class="chat-input__model"
+          :class="{
+            'chat-input__model--active': zeroStore.activeModel,
+            'chat-input__model--collapsed': isNarrowViewport,
+          }"
+          :disabled="disabled"
+          @click="toggleModelMenu"
+        >
+          <q-icon name="memory" size="14px" />
+          <span class="chat-input__model-label">{{
+            zeroStore.activeModel || t("chat.modelLabel")
+          }}</span>
+          <q-icon
+            name="expand_more"
+            size="14px"
+            class="chat-input__model-chevron"
+            :class="{ 'chat-input__model-chevron--open': modelMenuOpen }"
+          />
+        </button>
+        <transition name="chat-input__model-fade">
+          <div
+            v-if="modelMenuOpen"
+            v-click-outside="closeModelMenu"
+            class="chat-input__model-dropdown"
+          >
+            <div class="chat-input__model-header row items-center justify-between">
+              <span>{{ t("chat.switchModel") }}</span>
+              <q-icon name="memory" size="14px" color="grey-6" />
+            </div>
+            <div class="chat-input__model-separator" />
+            <div class="chat-input__model-search">
+              <q-icon name="search" size="14px" color="grey-6" class="q-mr-sm" />
+              <input
+                v-model="modelSearch"
+                type="text"
+                :placeholder="t('chat.searchModel')"
+                class="chat-input__model-search-input"
+                @click.stop
+              />
+            </div>
+            <div v-if="recentModels.length && !modelSearch" class="chat-input__model-section">
+              <div class="chat-input__model-section-title">
+                {{ t("chat.recentModels") }}
+              </div>
+              <ul class="chat-input__model-list chat-input__model-list--recent">
+                <li
+                  v-for="m in recentModels"
+                  :key="`recent-${m}`"
+                  :class="[
+                    'chat-input__model-item',
+                    { 'chat-input__model-item--active': m === zeroStore.activeModel },
+                  ]"
+                  @click="selectModel(m)"
+                >
+                  <span class="chat-input__model-item-avatar">
+                    <q-icon
+                      v-if="m === zeroStore.activeModel"
+                      name="check_circle"
+                      size="18px"
+                      color="primary"
+                    />
+                    <q-icon v-else name="history" size="18px" color="grey-6" />
+                  </span>
+                  <span class="chat-input__model-name">{{ m }}</span>
+                </li>
+              </ul>
+              <div class="chat-input__model-separator" />
+            </div>
+            <ul ref="modelListRef" class="chat-input__model-list">
+              <li
+                v-for="m in filteredModels"
+                :key="m"
+                :class="[
+                  'chat-input__model-item',
+                  { 'chat-input__model-item--active': m === zeroStore.activeModel },
+                ]"
+                @click="selectModel(m)"
+              >
+                <span class="chat-input__model-item-avatar">
+                  <q-icon
+                    v-if="m === zeroStore.activeModel"
+                    name="check_circle"
+                    size="18px"
+                    color="primary"
+                  />
+                  <q-icon v-else name="radio_button_unchecked" size="18px" color="grey-6" />
+                </span>
+                <span class="chat-input__model-name">{{ m }}</span>
+              </li>
+              <li v-if="zeroStore.isLoadingModels" class="chat-input__model-status">
+                <span class="chat-input__model-item-avatar">
+                  <q-spinner-dots size="18px" color="primary" />
+                </span>
+                <span>{{ t("chat.loadingModels") }}</span>
+              </li>
+              <li v-else-if="filteredModels.length === 0" class="chat-input__model-status">
+                <span class="chat-input__model-item-avatar">
+                  <q-icon name="search_off" size="18px" color="grey-6" />
+                </span>
+                <span>{{ t("chat.noModelsMatch") }}</span>
+              </li>
+            </ul>
+          </div>
+        </transition>
+      </div>
       <textarea
         ref="textareaRef"
         v-model="localValue"
@@ -194,12 +246,58 @@ const focused = ref(false);
 const attachedFile = ref(null);
 const pickingFile = ref(false);
 const modelMenuOpen = ref(false);
+const modelSearch = ref("");
+const modelListRef = ref(null);
+
+const MAX_RECENT_MODELS = 3;
+const recentModelsKey = "zero-recent-models";
+const permissionModeKey = "zero-permission-mode";
+
+// O mesmo breakpoint usado em MainLayout.vue para colapsar o painel direito.
+const LAYOUT_COLLAPSE_BREAKPOINT = 1024;
+const isNarrowViewport = ref($q.screen.width < LAYOUT_COLLAPSE_BREAKPOINT);
+
+function updateNarrowViewport() {
+  isNarrowViewport.value = $q.screen.width < LAYOUT_COLLAPSE_BREAKPOINT;
+}
+
+const permissionModeLabel = computed(() =>
+  zeroStore.permissionMode === "auto_allow" ? t("chat.autoAllow") : t("chat.ask"),
+);
+
+const permissionModeTooltip = computed(() =>
+  zeroStore.permissionMode === "auto_allow" ? t("chat.autoAllowTooltip") : t("chat.askTooltip"),
+);
+
+const recentModels = computed(() => {
+  const active = zeroStore.activeModel;
+  const recent = JSON.parse(localStorage.getItem(recentModelsKey) || "[]").filter(
+    (m) => typeof m === "string" && zeroStore.availableModels.includes(m) && m !== active,
+  );
+  if (active && zeroStore.availableModels.includes(active)) {
+    return [active, ...recent.filter((m) => m !== active)].slice(0, MAX_RECENT_MODELS);
+  }
+  return recent.slice(0, MAX_RECENT_MODELS);
+});
 
 // Load eagerly on mount instead of only on first click of the model picker,
 // so the menu is already populated by the time the user opens it - the
 // @show handler on the q-menu stays as a retry path if this fails silently
 // (e.g. a transient network hiccup probing the provider's model list).
-onMounted(() => zeroStore.loadAvailableModels());
+onMounted(() => {
+  updateNarrowViewport();
+  window.addEventListener("resize", updateNarrowViewport);
+  zeroStore.loadAvailableModels();
+  const savedMode = localStorage.getItem(permissionModeKey);
+  if (savedMode === "ask" || savedMode === "auto_allow") {
+    zeroStore.setPermissionMode(savedMode);
+  }
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener("resize", updateNarrowViewport);
+  releaseAttachedFilePreview();
+});
 
 const localValue = computed({
   get: () => props.modelValue,
@@ -226,6 +324,20 @@ const statusLabel = computed(() => {
     return `${status.toolName} ${t("chat.toolRunning")}`;
   }
   return null;
+});
+
+const filteredModels = computed(() => {
+  const query = modelSearch.value.trim().toLowerCase();
+  const active = zeroStore.activeModel;
+  const recent = recentModels.value;
+  let list = zeroStore.availableModels.filter((m) => !recent.includes(m));
+  if (query) {
+    list = list.filter((m) => m.toLowerCase().includes(query));
+  }
+  if (active && list.includes(active)) {
+    list = [active, ...list.filter((m) => m !== active)];
+  }
+  return list;
 });
 
 const statusClass = computed(() => {
@@ -361,8 +473,6 @@ function removeAttachedFile() {
   attachedFile.value = null;
 }
 
-onBeforeUnmount(releaseAttachedFilePreview);
-
 function onCancel() {
   emit("cancel");
 }
@@ -372,12 +482,59 @@ function onFocus() {
   emit("focus");
 }
 
-async function onModelMenuShow() {
+function togglePermissionMode() {
+  const nextMode = zeroStore.permissionMode === "ask" ? "auto_allow" : "ask";
+  zeroStore.setPermissionMode(nextMode);
+  localStorage.setItem(permissionModeKey, nextMode);
+}
+
+async function openModelMenu() {
   modelMenuOpen.value = true;
   await zeroStore.loadAvailableModels();
 }
 
+function toggleModelMenu() {
+  if (modelMenuOpen.value) {
+    modelMenuOpen.value = false;
+  } else {
+    openModelMenu();
+  }
+}
+
+function closeModelMenu() {
+  modelMenuOpen.value = false;
+  modelSearch.value = "";
+}
+
+function selectModel(model) {
+  zeroStore.switchModel(model);
+  rememberRecentModel(model);
+  closeModelMenu();
+}
+
+function rememberRecentModel(model) {
+  const recent = JSON.parse(localStorage.getItem(recentModelsKey) || "[]").filter(
+    (m) => typeof m === "string" && m !== model,
+  );
+  recent.unshift(model);
+  localStorage.setItem(recentModelsKey, JSON.stringify(recent.slice(0, MAX_RECENT_MODELS)));
+}
+
 defineExpose({ focus: () => textareaRef.value?.focus() });
+
+const vClickOutside = {
+  mounted(el, binding) {
+    el._clickOutside = (event) => {
+      if (!(el === event.target || el.contains(event.target))) {
+        binding.value();
+      }
+    };
+    document.addEventListener("click", el._clickOutside, true);
+  },
+  unmounted(el) {
+    document.removeEventListener("click", el._clickOutside, true);
+  },
+};
 </script>
 
 <style scoped>
@@ -390,7 +547,8 @@ defineExpose({ focus: () => textareaRef.value?.focus() });
   transition:
     border-color 0.15s ease,
     background 0.15s ease;
-  overflow: hidden;
+  /* overflow: hidden removido — o dropdown absoluto do seletor de modelos
+     precisa ultrapassar os limites do .chat-input */
 }
 
 .chat-input__row {
@@ -655,28 +813,125 @@ defineExpose({ focus: () => textareaRef.value?.focus() });
   color: rgba(128, 128, 128, 0.8);
 }
 
+.chat-input__mode {
+  flex-shrink: 0;
+  height: 34px;
+  width: auto;
+  max-width: 140px;
+  padding: 0 10px 0 8px;
+  border-radius: 17px;
+  border: 1px solid rgba(128, 128, 128, 0.22);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: transparent;
+  color: rgba(128, 128, 128, 0.9);
+  cursor: pointer;
+  font-size: 0.82em;
+  font-weight: 500;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    transform 0.1s ease,
+    width 0.5s ease,
+    max-width 0.5s ease,
+    padding 0.5s ease;
+}
+
+.chat-input__mode:hover:not(:disabled) {
+  background: rgba(128, 128, 128, 0.08);
+  border-color: rgba(128, 128, 128, 0.32);
+}
+
+.chat-input__mode:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.chat-input__mode:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.chat-input__mode--active {
+  color: var(--q-primary, #1976d2);
+  border-color: rgba(25, 118, 210, 0.35);
+  background: rgba(25, 118, 210, 0.06);
+}
+
+.chat-input__mode--active:hover:not(:disabled) {
+  background: rgba(25, 118, 210, 0.12);
+  border-color: rgba(25, 118, 210, 0.45);
+}
+
+.chat-input__mode--collapsed {
+  width: 34px;
+  max-width: 34px;
+  padding: 0;
+  justify-content: center;
+}
+
+.chat-input__mode--collapsed .chat-input__mode-label {
+  max-width: 0;
+  opacity: 0;
+  margin-left: -5px;
+}
+
+.chat-input__mode--collapsed:hover:not(:disabled) {
+  width: auto;
+  max-width: 140px;
+  padding: 0 10px 0 8px;
+  justify-content: flex-start;
+}
+
+.chat-input__mode--collapsed:hover:not(:disabled) .chat-input__mode-label {
+  max-width: 90px;
+  opacity: 1;
+  margin-left: 0;
+}
+
+.chat-input__mode-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+  max-width: 90px;
+  opacity: 1;
+  transition:
+    max-width 0.5s ease,
+    opacity 0.35s ease,
+    margin 0.35s ease;
+}
+
 .chat-input__model {
   flex-shrink: 0;
   height: 34px;
+  width: auto;
   max-width: 180px;
-  padding: 0 10px 0 12px;
+  padding: 0 8px 0 10px;
   border-radius: 17px;
-  border: none;
+  border: 1px solid rgba(128, 128, 128, 0.22);
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  background: rgba(128, 128, 128, 0.14);
+  gap: 5px;
+  background: transparent;
   color: rgba(128, 128, 128, 0.9);
   cursor: pointer;
-  font-size: 0.78em;
+  font-size: 0.82em;
+  font-weight: 500;
   transition:
     background 0.15s ease,
+    border-color 0.15s ease,
     color 0.15s ease,
-    transform 0.1s ease;
+    transform 0.1s ease,
+    width 0.5s ease,
+    max-width 0.5s ease,
+    padding 0.5s ease;
 }
 
 .chat-input__model:hover:not(:disabled) {
-  background: rgba(128, 128, 128, 0.24);
+  background: rgba(128, 128, 128, 0.08);
+  border-color: rgba(128, 128, 128, 0.32);
 }
 
 .chat-input__model:active:not(:disabled) {
@@ -689,12 +944,47 @@ defineExpose({ focus: () => textareaRef.value?.focus() });
 }
 
 .chat-input__model--active {
-  color: var(--q-primary, #1976d2);
-  background: rgba(25, 118, 210, 0.12);
+  color: rgba(128, 128, 128, 0.9);
+  border-color: rgba(128, 128, 128, 0.35);
+  background: rgba(128, 128, 128, 0.08);
 }
 
 .chat-input__model--active:hover:not(:disabled) {
-  background: rgba(25, 118, 210, 0.2);
+  background: rgba(128, 128, 128, 0.12);
+  border-color: rgba(128, 128, 128, 0.45);
+}
+
+.chat-input__model--collapsed {
+  width: 34px;
+  max-width: 34px;
+  padding: 0;
+  justify-content: center;
+}
+
+.chat-input__model--collapsed .chat-input__model-label,
+.chat-input__model--collapsed .chat-input__model-chevron {
+  max-width: 0;
+  opacity: 0;
+  margin-left: -5px;
+}
+
+.chat-input__model--collapsed:hover:not(:disabled) {
+  width: auto;
+  max-width: 180px;
+  padding: 0 8px 0 10px;
+  justify-content: flex-start;
+}
+
+.chat-input__model--collapsed:hover:not(:disabled) .chat-input__model-label {
+  max-width: 110px;
+  opacity: 1;
+  margin-left: 0;
+}
+
+.chat-input__model--collapsed:hover:not(:disabled) .chat-input__model-chevron {
+  max-width: 14px;
+  opacity: 1;
+  margin-left: 0;
 }
 
 .chat-input__model-label {
@@ -702,24 +992,88 @@ defineExpose({ focus: () => textareaRef.value?.focus() });
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 110px;
+  line-height: 1.3;
+  opacity: 1;
+  transition:
+    max-width 0.5s ease,
+    opacity 0.35s ease,
+    margin 0.35s ease;
 }
 
 .chat-input__model-chevron {
-  transition: transform 0.2s ease;
+  transition:
+    transform 0.2s ease,
+    max-width 0.5s ease,
+    opacity 0.35s ease,
+    margin 0.35s ease;
 }
 
 .chat-input__model-chevron--open {
   transform: rotate(180deg);
 }
 
-.chat-input__model-menu {
+.chat-input__model-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.chat-input__model-dropdown {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 6000;
+  min-width: 240px;
+  max-width: 340px;
+  max-height: 320px;
+  display: flex;
+  flex-direction: column;
+  padding: 6px 0;
   border-radius: 12px;
+  background: rgba(30, 30, 30, 0.5);
+  border: 1px solid rgba(128, 128, 128, 0.18);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
   overflow: hidden;
 }
 
-.chat-input__model-list {
-  min-width: 220px;
-  max-width: 320px;
+.chat-input__model-search {
+  display: flex;
+  align-items: center;
+  margin: 4px 12px 6px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(128, 128, 128, 0.12);
+  border: 1px solid rgba(128, 128, 128, 0.18);
+}
+
+.chat-input__model-search-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--chat-text);
+  font-size: 0.85em;
+  line-height: 1.3;
+}
+
+.chat-input__model-search-input::placeholder {
+  color: rgba(128, 128, 128, 0.7);
+}
+
+.chat-input__model-fade-enter-active,
+.chat-input__model-fade-leave-active {
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease;
+}
+
+.chat-input__model-fade-enter-from,
+.chat-input__model-fade-leave-to {
+  opacity: 0;
+  transform: translateY(6px);
 }
 
 .chat-input__model-header {
@@ -731,14 +1085,46 @@ defineExpose({ focus: () => textareaRef.value?.focus() });
   color: var(--chat-text-muted, rgba(128, 128, 128, 0.8));
 }
 
+.chat-input__model-separator {
+  height: 1px;
+  margin: 4px 12px;
+  background: rgba(128, 128, 128, 0.18);
+}
+
+.chat-input__model-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  min-width: 220px;
+  max-width: 320px;
+  max-height: 220px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .chat-input__model-item {
+  display: flex;
+  align-items: center;
   min-height: 40px;
   padding: 6px 12px;
+  margin: 2px 8px;
   border-radius: 8px;
-  margin: 2px 6px;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.chat-input__model-item:hover {
+  background: rgba(128, 128, 128, 0.12);
+}
+
+.chat-input__model-item--active {
+  background: rgba(25, 118, 210, 0.1);
 }
 
 .chat-input__model-item-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-width: 28px;
   padding-right: 8px;
 }
@@ -751,8 +1137,11 @@ defineExpose({ focus: () => textareaRef.value?.focus() });
 }
 
 .chat-input__model-status {
+  display: flex;
+  align-items: center;
   min-height: 40px;
   padding: 6px 12px;
+  margin: 2px 8px;
   color: var(--chat-text-muted, rgba(128, 128, 128, 0.8));
   font-size: 0.85em;
 }

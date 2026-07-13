@@ -83,7 +83,10 @@
         <ThinkingBlock v-else-if="message.type === 'thinking'" :message="message" />
         <ToolCallMessage v-else-if="message.type === 'tool_call'" :message="message" />
         <PermissionDecisionBadge
-          v-else-if="message.type === 'permission_request'"
+          v-else-if="
+            message.type === 'permission_request' &&
+            !(message.status === 'pending' && message.answerable)
+          "
           :message="permissionDecisionBadgeFrom(message)"
         />
         <PermissionDecisionBadge
@@ -140,10 +143,22 @@ import WorkingIndicator from "@/components/chat/WorkingIndicator.vue";
 import ChatInput from "@/components/chat/ChatInput.vue";
 
 function permissionDecisionBadgeFrom(request) {
+  // A recorded decision (status set from a live answer or a replayed
+  // permission_decision history entry) always wins - only a request that's
+  // genuinely still unanswered and no longer answerable counts as expired.
+  let action;
+  if (request.status === "denied") {
+    action = "deny";
+  } else if (request.status === "approved") {
+    action = "allow";
+  } else if (request.answerable === false) {
+    action = "expired";
+  } else {
+    action = "allow";
+  }
   return {
     toolName: request.toolName,
-    action:
-      request.answerable === false ? "expired" : request.status === "denied" ? "deny" : "allow",
+    action,
     reason: request.reason,
     riskLevel: request.riskLevel,
   };

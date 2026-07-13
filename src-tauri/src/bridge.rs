@@ -500,9 +500,13 @@ fn derive_title_from_message(content: &str) -> String {
 
 /// A permission request from the agent, awaiting the user's decision.
 /// `reply_id` is the original JSON-RPC request id (echoed back verbatim
-/// when we answer it).
+/// when we answer it). `payload` is the translated request (toolName/reason)
+/// kept around so `respond_to_permission` can persist a matching decision
+/// record - without it, history replay had no way to tell an answered
+/// request apart from one abandoned mid-session, and showed both as expired.
 struct PendingPermission {
     reply_id: serde_json::Value,
+    payload: serde_json::Value,
 }
 
 /// A live `zero acp` child process plus the peer used to talk to it.
@@ -774,11 +778,12 @@ impl ZeroBridge {
                                 .map(|d| d.as_nanos())
                                 .unwrap_or_default()
                         );
-                        pending_permissions
-                            .lock()
-                            .await
-                            .insert(correlation_id.clone(), PendingPermission { reply_id: id });
+                        log::info!("[bridge] permission request received: correlation_id={correlation_id} reply_id={id}");
                         let payload = translate_permission_request(&correlation_id, &params);
+                        pending_permissions.lock().await.insert(
+                            correlation_id.clone(),
+                            PendingPermission { reply_id: id.clone(), payload: payload.clone() },
+                        );
                         if let Some(path) = history_path.lock().await.clone() {
                             flush_pending_reasoning(&path, &mut pending_thinking).await;
                             append_history(&path, "permission_request", &payload).await;
@@ -939,13 +944,34 @@ impl ZeroBridge {
     /// agent. This is the actual payoff of the ACP migration: unlike the old
     /// `zero exec` transport, this reply really reaches the agent.
     pub async fn respond_to_permission(&self, request_id: String, option_id: String) -> Result<(), String> {
+        log::info!("[bridge] respond_to_permission called: request_id={request_id} option_id={option_id}");
         let pending = self
             .pending_permissions
             .lock()
             .await
             .remove(&request_id)
-            .ok_or_else(|| format!("No pending permission request with id {request_id}"))?;
+            .ok_or_else(|| {
+                log::warn!("[bridge] no pending permission request with id {request_id}");
+                format!("No pending permission request with id {request_id}")
+            })?;
 
+        // Persist the decision itself, not just the request: without this,
+        // history replay (buildMessagesFromHistory on the frontend) can't
+        // distinguish "the user answered in time" from "the session ended
+        // with no answer", and rendered both as an expired permission once
+        // the periodic history resync overwrote the live in-memory state.
+        let history_path = self.session.lock().await.as_ref().map(|s| s.history_path.clone());
+        if let Some(history_path) = history_path {
+            let decision = serde_json::json!({
+                "requestId": request_id,
+                "toolName": pending.payload.get("toolName").cloned().unwrap_or_default(),
+                "reason": pending.payload.get("reason").cloned().unwrap_or_default(),
+                "action": if option_id.starts_with("allow") { "allow" } else { "deny" },
+            });
+            append_history(&history_path, "permission_decision", &decision).await;
+        }
+
+        log::info!("[bridge] sending permission reply: reply_id={} option_id={option_id}", pending.reply_id);
         let (peer, _, _) = self.ensure_live().await?;
         peer.respond(
             pending.reply_id,

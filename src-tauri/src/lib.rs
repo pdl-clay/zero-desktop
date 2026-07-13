@@ -14,6 +14,46 @@ use std::sync::Arc;
 use tauri::Manager;
 
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
+pub struct McpBackendInfo {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub backend_type: String,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(rename = "argCount", default)]
+    pub arg_count: i64,
+    #[serde(rename = "envKeyCount", default)]
+    pub env_key_count: i64,
+    #[serde(rename = "headerCount", default)]
+    pub header_count: i64,
+    #[serde(rename = "toolCount", default)]
+    pub tool_count: i64,
+    #[serde(rename = "allowGranted", default)]
+    pub allow_granted: i64,
+    #[serde(rename = "denyGranted", default)]
+    pub deny_granted: i64,
+}
+
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+pub struct McpCheckResult {
+    #[serde(rename = "serverName")]
+    pub server_name: String,
+    pub status: String,
+    #[serde(rename = "toolCount", default)]
+    pub tool_count: i64,
+    #[serde(default)]
+    pub tools: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+struct BackendsOutput {
+    #[serde(rename = "mcpServers", default)]
+    mcp_servers: Vec<McpBackendInfo>,
+}
+
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 pub struct SessionInfo {
     #[serde(alias = "sessionId")]
     pub session_id: String,
@@ -284,6 +324,56 @@ fn locate_zero_cli() -> Result<locator::ZeroLocation, String> {
 }
 
 #[tauri::command]
+async fn list_mcp_backends() -> Result<Vec<McpBackendInfo>, String> {
+    let zero_path = locate_zero()
+        .map_err(|e| format!("Failed to locate zero CLI: {e}"))?
+        .path;
+
+    let output = tokio::process::Command::new(&zero_path)
+        .arg("backends")
+        .arg("--json")
+        .output()
+        .await
+        .map_err(|e| format!("Failed to run zero backends: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("zero backends failed: {stderr}"));
+    }
+
+    let backends: BackendsOutput = serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("Failed to parse backends JSON: {e}"))?;
+
+    Ok(backends.mcp_servers)
+}
+
+#[tauri::command]
+async fn check_mcp_backend(name: String) -> Result<McpCheckResult, String> {
+    let zero_path = locate_zero()
+        .map_err(|e| format!("Failed to locate zero CLI: {e}"))?
+        .path;
+
+    let output = tokio::process::Command::new(&zero_path)
+        .arg("mcp")
+        .arg("check")
+        .arg(&name)
+        .arg("--json")
+        .output()
+        .await
+        .map_err(|e| format!("Failed to run zero mcp check: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("zero mcp check failed: {stderr}"));
+    }
+
+    let result: McpCheckResult = serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("Failed to parse mcp check JSON: {e}"))?;
+
+    Ok(result)
+}
+
+#[tauri::command]
 async fn start_zero_session(
     state: tauri::State<'_, Arc<ZeroBridge>>,
     cwd: PathBuf,
@@ -365,7 +455,9 @@ pub fn run() {
             rename_session,
             read_file_attachment,
             list_zero_models,
-            switch_zero_model
+            switch_zero_model,
+            list_mcp_backends,
+            check_mcp_backend
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
