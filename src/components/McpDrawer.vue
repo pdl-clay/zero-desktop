@@ -4,7 +4,8 @@
     @update:model-value="onUpdate"
     :width="isDesktop && !expanded ? 0 : 320"
     :breakpoint="1024"
-    :show-if-above="isDesktop"
+    show-if-above
+    :behavior="isDesktop ? 'desktop' : 'mobile'"
     side="right"
     bordered
     no-swipe-close
@@ -295,6 +296,14 @@ function onUpdate(value) {
 // Below the breakpoint the drawer is an overlay controlled by modelValue
 // (show/hide). At/above it, the drawer stays docked and "closing" just
 // collapses its width to 0, so `expanded` drives the visual state instead.
+// `show-if-above` must stay static (not bound to isDesktop): QDrawer seeds
+// its internal desktop/mobile memory from this prop's value at mount time,
+// and if it were reactive it would "freeze" at whatever isDesktop was when
+// the app booted, breaking the very first breakpoint crossing afterwards.
+// `behavior` is bound to isDesktop instead so that crossing the breakpoint
+// always re-evaluates the drawer's mobile/desktop mode live, even if a
+// mobile-overlay open earlier left the layout's internal scroll-lock state
+// in a way that would otherwise suppress that re-evaluation.
 const isDesktop = computed(() => $q.screen.width >= 1024);
 const isOpenVisually = computed(() => (isDesktop.value ? expanded.value : props.modelValue));
 const toggleLeft = computed(() => `${$q.screen.width - (isOpenVisually.value ? 320 : 0)}px`);

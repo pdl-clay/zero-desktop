@@ -4,11 +4,20 @@
 //! reproduce - without spending real agent turns - the exact sequence of
 //! `session/update` notifications a live plan run produces. Used to
 //! investigate why the plan checklist wasn't showing up in the frontend.
+//!
+//! Mirrors the shape of `bridge.rs`'s own `spawn_stdout_reader`: a single
+//! background task owns stdout and feeds `Response`s back into the `AcpPeer`
+//! while forwarding `Notification`s to the test through a channel. Waiting
+//! on a `peer.request()` future directly against a `next_line()` future in
+//! the same `select!`/`join!` deadlocks, since the response can only arrive
+//! after a notification (or the response line itself) has been read off the
+//! same stream - which is exactly the bug the first draft of this test hit.
 
 use app_lib::acp::{parse_line, AcpMessage, AcpPeer};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
+use tokio::sync::mpsc;
 use tokio::time::timeout;
 
 fn fake_backend_path() -> std::path::PathBuf {
@@ -33,33 +42,41 @@ async fn test_fake_backend_plan_sequence_matches_bridge_contract() {
     let stdin = child.stdin.take().unwrap();
     let stdout = child.stdout.take().unwrap();
     let peer = AcpPeer::new(stdin);
-    let mut lines = BufReader::new(stdout).lines();
 
-    // initialize
-    let init = peer.request("initialize", serde_json::json!({}));
-    let (init_result, first_line) = tokio::join!(init, async {
-        timeout(Duration::from_secs(5), lines.next_line()).await.unwrap().unwrap()
+    let (tx, mut notifications) = mpsc::unbounded_channel::<(String, serde_json::Value)>();
+    let reader_peer = peer.clone();
+    let reader = tokio::spawn(async move {
+        let mut lines = BufReader::new(stdout).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            match parse_line(&line) {
+                Some(AcpMessage::Response { id, result }) => {
+                    reader_peer.resolve_response(id, result).await;
+                }
+                Some(AcpMessage::Notification { method, params }) => {
+                    let _ = tx.send((method, params));
+                }
+                _ => {}
+            }
+        }
     });
-    // Feed the response line back into the peer manually since we're
-    // reading stdout ourselves instead of running the real reader loop.
-    if let Some(AcpMessage::Response { id, result }) = parse_line(&first_line.unwrap()) {
-        peer.resolve_response(id, result).await;
-    }
-    init_result.expect("initialize should succeed");
 
-    // session/new
-    let new_session = peer.request("session/new", serde_json::json!({}));
-    let (session_result, line) = tokio::join!(new_session, async {
-        timeout(Duration::from_secs(5), lines.next_line()).await.unwrap().unwrap()
-    });
-    if let Some(AcpMessage::Response { id, result }) = parse_line(&line.unwrap()) {
-        peer.resolve_response(id, result).await;
-    }
-    let session_result = session_result.expect("session/new should succeed");
+    let init = timeout(Duration::from_secs(5), peer.request("initialize", serde_json::json!({})))
+        .await
+        .expect("initialize timed out")
+        .expect("initialize should succeed");
+    assert_eq!(init["protocolVersion"], 1);
+
+    let session_result = timeout(Duration::from_secs(5), peer.request("session/new", serde_json::json!({})))
+        .await
+        .expect("session/new timed out")
+        .expect("session/new should succeed");
     let session_id = session_result["sessionId"].as_str().unwrap().to_string();
     assert_eq!(session_id, "fake-session-1");
 
-    // session/prompt - collect every notification until the matching response.
+    // Drive the turn and drain notifications concurrently - the fake
+    // backend emits several `session/update`s before it answers
+    // `session/prompt`, exactly like the real `zero acp` does for a turn
+    // that updates its plan mid-flight.
     let prompt = peer.request("session/prompt", serde_json::json!({ "sessionId": session_id }));
     tokio::pin!(prompt);
 
@@ -67,31 +84,40 @@ async fn test_fake_backend_plan_sequence_matches_bridge_contract() {
     let mut saw_tool_call = false;
     let mut saw_tool_call_update = false;
 
-    let prompt_result = loop {
-        tokio::select! {
-            result = &mut prompt => break result,
-            line = timeout(Duration::from_secs(5), lines.next_line()) => {
-                let Some(line) = line.unwrap().unwrap() else { continue };
-                match parse_line(&line) {
-                    Some(AcpMessage::Notification { method, params }) if method == "session/update" => {
-                        let kind = params["update"]["sessionUpdate"].as_str().unwrap_or("");
-                        match kind {
-                            "plan" => plan_snapshots.push(params["update"]["entries"].clone()),
-                            "tool_call" => saw_tool_call = true,
-                            "tool_call_update" => saw_tool_call_update = true,
-                            _ => {}
-                        }
-                    }
-                    Some(AcpMessage::Response { id, result }) => {
-                        peer.resolve_response(id, result).await;
-                    }
-                    _ => {}
-                }
-            }
+    let mut record_update = |method: &str, params: &serde_json::Value| {
+        if method != "session/update" {
+            return;
+        }
+        let kind = params["update"]["sessionUpdate"].as_str().unwrap_or("");
+        match kind {
+            "plan" => plan_snapshots.push(params["update"]["entries"].clone()),
+            "tool_call" => saw_tool_call = true,
+            "tool_call_update" => saw_tool_call_update = true,
+            _ => {}
         }
     };
 
-    let final_result = prompt_result.expect("session/prompt should succeed");
+    let prompt_result = loop {
+        tokio::select! {
+            result = &mut prompt => break result,
+            Some((method, params)) = notifications.recv() => record_update(&method, &params),
+        }
+    };
+
+    // The reader task pushes notifications to the channel strictly in the
+    // order it reads them off stdout, then resolves the `session/prompt`
+    // response last - but `select!` polls both branches every iteration and
+    // may pick the now-ready response branch on some iteration even while
+    // earlier notifications are still sitting unread in the channel buffer.
+    // Drain whatever arrived alongside the final response before asserting.
+    while let Ok((method, params)) = notifications.try_recv() {
+        record_update(&method, &params);
+    }
+
+    let final_result = timeout(Duration::from_secs(5), async { prompt_result })
+        .await
+        .expect("session/prompt timed out")
+        .expect("session/prompt should succeed");
     assert_eq!(final_result["stopReason"], "end_turn");
 
     // The exact contract bridge.rs's `translate_session_update` relies on:
@@ -111,5 +137,6 @@ async fn test_fake_backend_plan_sequence_matches_bridge_contract() {
     assert!(saw_tool_call, "expected a tool_call between plan updates");
     assert!(saw_tool_call_update, "expected the tool_call to resolve");
 
+    reader.abort();
     let _ = child.kill().await;
 }
