@@ -88,6 +88,9 @@ export default {
     cancelled: "Cancelled",
     cancelRun: "Cancel (Esc)",
   },
+  plan: {
+    title: "Plan",
+  },
   mcp: {
     drawerTitle: "Project information",
     title: "MCP Servers",

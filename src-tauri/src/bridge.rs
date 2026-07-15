@@ -831,7 +831,7 @@ impl ZeroBridge {
                                     pending_text.push_str(e.payload["delta"].as_str().unwrap_or(""));
                                 }
                             }
-                            "tool_call" | "tool_call_update" => {
+                            "tool_call" | "tool_call_update" | "plan" => {
                                 if let Some(path) = history_path.lock().await.clone() {
                                     flush_pending_reasoning(&path, &mut pending_thinking).await;
                                     if let Some(ref e) = event {

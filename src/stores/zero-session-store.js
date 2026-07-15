@@ -411,6 +411,12 @@ export function useZeroSessionStore(key) {
               });
               break;
 
+            case "plan_update":
+              if (Array.isArray(payload.entries)) {
+                this.currentPlan = payload.entries;
+              }
+              break;
+
             case "permission_request":
               this.addPermissionRequest({ ...payload, answerable: false });
               break;

@@ -120,6 +120,7 @@
         :disabled="!canSend"
         :loading="store.runInProgress"
         :working-status="store.workingStatus"
+        :plan="store.activePlan"
         @send="onSend"
         @cancel="store.cancelRun()"
         @focus="$emit('focus-input')"
