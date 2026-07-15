@@ -87,9 +87,9 @@ pub struct FileAttachment {
 
 ### Supported extensions (in `attachment_kind_from_extension`)
 
-| Kind  | Extensions |
-|-------|-----------|
-| Image | png, jpg, jpeg, gif, webp |
+| Kind  | Extensions                                                                                                                                               |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Image | png, jpg, jpeg, gif, webp                                                                                                                                |
 | Text  | txt, md, csv, json, yaml, yml, xml, html, htm, css, js, ts, jsx, tsx, py, go, rs, java, kt, swift, c, cpp, cc, cxx, h, hpp, rb, php, sh, sql, dockerfile |
 
 The MIME type for text/code files uses `text/x-<language>` for most languages (e.g. `text/x-python`, `text/x-rust`), with standard types for well-known formats (`text/markdown`, `text/csv`, `application/json`, etc.).
@@ -109,7 +109,10 @@ fn build_prompt_blocks(content: &str, file: Option<&FileAttachment>) -> Vec<serd
    - **Image** (`image/*`): `{"type": "image", "mimeType": "...", "data": "..."}`
    - **Text** (`text/*`, `application/json`, `application/yaml`, `application/xml`): the base64 data is decoded to UTF-8 and wrapped in an `<attached file>` XML tag:
      ```json
-     {"type": "text", "text": "<attached file name=\"notes.md\" type=\"text/markdown\">\n...content...\n</attached file>"}
+     {
+       "type": "text",
+       "text": "<attached file name=\"notes.md\" type=\"text/markdown\">\n...content...\n</attached file>"
+     }
      ```
 
 The `attachment_kind_from_mime()` helper on the Rust side (in `bridge.rs`) mirrors `attachment_kind_from_extension()` but works from the already-resolved MIME type at send time, so the same file is correctly routed to the right ACP block type.
@@ -163,19 +166,19 @@ Returns a `FileAttachment` object (`{ mimeType, data, name }`).
 
 **`src/utils/file.js`:**
 
-| Function              | Description                                                      |
-| --------------------- | ---------------------------------------------------------------- |
-| `isImageMimeType(m)`  | `true` if MIME type starts with `image/`.                        |
-| `isTextMimeType(m)`   | `true` for `text/*`, `application/json`, `application/yaml`, `application/xml`. |
-| `getFileIcon(m, name)`| Returns a Material icon name based on MIME type or file extension (e.g. `"code"` for `.py`, `"javascript"` for `.js`, `"image"` for images). |
+| Function               | Description                                                                                                                                  |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `isImageMimeType(m)`   | `true` if MIME type starts with `image/`.                                                                                                    |
+| `isTextMimeType(m)`    | `true` for `text/*`, `application/json`, `application/yaml`, `application/xml`.                                                              |
+| `getFileIcon(m, name)` | Returns a Material icon name based on MIME type or file extension (e.g. `"code"` for `.py`, `"javascript"` for `.js`, `"image"` for images). |
 
 **`src/utils/image.js`:**
 
-| Function                    | Description                                                    |
-| --------------------------- | -------------------------------------------------------------- |
+| Function                    | Description                                                                                               |
+| --------------------------- | --------------------------------------------------------------------------------------------------------- |
 | `base64ToObjectUrl(b64, m)` | Decodes base64 to a `blob:` URL via `Blob` + `URL.createObjectURL`. Caller must revoke the URL when done. |
-| `base64ToUint8Array(b64)`   | Decodes standard base64 to `Uint8Array` via `atob`.            |
-| `base64ToDataUri(b64, m)`   | Builds a `data:` URI from base64 data. Fallback when blob URLs fail. |
+| `base64ToUint8Array(b64)`   | Decodes standard base64 to `Uint8Array` via `atob`.                                                       |
+| `base64ToDataUri(b64, m)`   | Builds a `data:` URI from base64 data. Fallback when blob URLs fail.                                      |
 
 ### History replay
 

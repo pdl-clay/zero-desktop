@@ -68,12 +68,12 @@ O zero já indexa sessões (`zero sessions list --json`) e grava seu próprio `~
 
 O zero-desktop mantém vários pequenos arquivos JSON em `<app_data_dir>/zero-desktop/` para dados que o ACP não expõe:
 
-| Arquivo | Propósito |
-|---|---|
-| `session-history/<sessionId>.jsonl` | Log rico por sessão (mensagens, chamadas de ferramenta, pensamentos, permissões) |
-| `session-titles.json` | `{ sessionId: title }` — auto-derivado da primeira mensagem ou renomeado pelo usuário |
-| `session-models.json` | `{ sessionId: modelId }` — qual modelo estava ativo quando a sessão foi criada |
-| `mcp-status-cache.json` | Último status de saúde conhecido para cada backend MCP |
+| Arquivo                             | Propósito                                                                             |
+| ----------------------------------- | ------------------------------------------------------------------------------------- |
+| `session-history/<sessionId>.jsonl` | Log rico por sessão (mensagens, chamadas de ferramenta, pensamentos, permissões)      |
+| `session-titles.json`               | `{ sessionId: title }` — auto-derivado da primeira mensagem ou renomeado pelo usuário |
+| `session-models.json`               | `{ sessionId: modelId }` — qual modelo estava ativo quando a sessão foi criada        |
+| `mcp-status-cache.json`             | Último status de saúde conhecido para cada backend MCP                                |
 
 ## 3. Fluxo de Conversa
 

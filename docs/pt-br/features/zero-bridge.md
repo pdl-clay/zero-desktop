@@ -26,67 +26,67 @@ A conexão segue a arquitetura definida em [`docs/pt-br/architecture/connection.
 
 #### Commands de sessão (via `zero acp`)
 
-| Command                 | Descrição                                                                                                |
-| ----------------------- | -------------------------------------------------------------------------------------------------------- |
-| `locate_zero_cli`       | Retorna o caminho e a versão do zero CLI.                                                                |
-| `start_zero_session`    | Sobe o `zero acp` pro workspace informado e abre (ou carrega) uma sessão.                                |
-| `send_zero_message`     | Manda um `session/prompt`, opcionalmente com anexo de arquivo, transmitindo progresso de volta via eventos. |
-| `respond_to_permission` | Responde um `session/request_permission` pendente com a opção escolhida.                                 |
+| Command                 | Descrição                                                                                                                                              |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `locate_zero_cli`       | Retorna o caminho e a versão do zero CLI.                                                                                                              |
+| `start_zero_session`    | Sobe o `zero acp` pro workspace informado e abre (ou carrega) uma sessão.                                                                              |
+| `send_zero_message`     | Manda um `session/prompt`, opcionalmente com anexo de arquivo, transmitindo progresso de volta via eventos.                                            |
+| `respond_to_permission` | Responde um `session/request_permission` pendente com a opção escolhida.                                                                               |
 | `cancel_zero_run`       | Mata o processo da sessão atual (não existe método `session/cancel`). Session id e histórico são preservados; o próximo `send()` respawna e reconecta. |
-| `stop_zero_session`     | Para a sessão ativa e limpa todo o estado.                                                               |
+| `stop_zero_session`     | Para a sessão ativa e limpa todo o estado.                                                                                                             |
 
 #### Commands de gerenciamento de sessão (via zero CLI)
 
-| Command                 | Descrição                                                                                                |
-| ----------------------- | -------------------------------------------------------------------------------------------------------- |
-| `list_zero_sessions`    | Lista sessões de um workspace (`zero sessions list --json`, filtrado por `cwd`). Faz overlay dos títulos e modelos do zero-desktop. |
-| `load_session_history`  | Carrega o histórico rico de uma sessão — prefere o log local do zero-desktop (`session-history/<id>.jsonl`), cai pro `events.jsonl` do zero. Retorna eventos tipados: `message`, `reasoning`, `tool_call`, `tool_result`, `permission_request`, `permission_decision`, `error`. |
-| `delete_session`        | Apaga os dados de uma sessão: arquivo de histórico local do zero-desktop, overlays de título/modelo, e diretório de sessão do próprio zero. |
-| `rename_session`        | Define (ou sobrescreve) o título de uma sessão no mapa de títulos local do zero-desktop. Usado tanto para títulos auto-derivados na primeira mensagem quanto para renomeações explícitas do usuário. |
+| Command                | Descrição                                                                                                                                                                                                                                                                       |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `list_zero_sessions`   | Lista sessões de um workspace (`zero sessions list --json`, filtrado por `cwd`). Faz overlay dos títulos e modelos do zero-desktop.                                                                                                                                             |
+| `load_session_history` | Carrega o histórico rico de uma sessão — prefere o log local do zero-desktop (`session-history/<id>.jsonl`), cai pro `events.jsonl` do zero. Retorna eventos tipados: `message`, `reasoning`, `tool_call`, `tool_result`, `permission_request`, `permission_decision`, `error`. |
+| `delete_session`       | Apaga os dados de uma sessão: arquivo de histórico local do zero-desktop, overlays de título/modelo, e diretório de sessão do próprio zero.                                                                                                                                     |
+| `rename_session`       | Define (ou sobrescreve) o título de uma sessão no mapa de títulos local do zero-desktop. Usado tanto para títulos auto-derivados na primeira mensagem quanto para renomeações explícitas do usuário.                                                                            |
 
 #### Commands de arquivo
 
-| Command                 | Descrição                                                                                                |
-| ----------------------- | -------------------------------------------------------------------------------------------------------- |
-| `read_file_attachment`  | Lê um arquivo do disco (até 10 MB), valida a extensão, detecta imagem vs. texto, rejeita binário em arquivos de texto, e retorna codificado em base64 com seu MIME type. Usado antes de anexar um arquivo a uma mensagem. |
+| Command                | Descrição                                                                                                                                                                                                                 |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `read_file_attachment` | Lê um arquivo do disco (até 10 MB), valida a extensão, detecta imagem vs. texto, rejeita binário em arquivos de texto, e retorna codificado em base64 com seu MIME type. Usado antes de anexar um arquivo a uma mensagem. |
 
 #### Commands de modelo
 
-| Command                 | Descrição                                                                                                |
-| ----------------------- | -------------------------------------------------------------------------------------------------------- |
-| `list_zero_models`      | Consulta o endpoint de listagem de modelos do provedor ativo via `zero providers models --json` e retorna a lista completa mais qual modelo está ativo. Não é instantâneo — uma chamada de rede real. |
-| `switch_zero_model`     | Atualiza o modelo do provedor ativo globalmente via `zero providers add --model <x> --set-active`, depois mata o processo da sessão ao vivo para que a próxima mensagem capte a mudança. |
+| Command             | Descrição                                                                                                                                                                                             |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `list_zero_models`  | Consulta o endpoint de listagem de modelos do provedor ativo via `zero providers models --json` e retorna a lista completa mais qual modelo está ativo. Não é instantâneo — uma chamada de rede real. |
+| `switch_zero_model` | Atualiza o modelo do provedor ativo globalmente via `zero providers add --model <x> --set-active`, depois mata o processo da sessão ao vivo para que a próxima mensagem capte a mudança.              |
 
 #### Commands MCP
 
-| Command                    | Descrição                                                                                             |
-| -------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `list_mcp_backends`        | Lê servidores MCP configurados na config do zero (`zero backends --json`) e faz overlay de status de saúde cached. |
-| `check_mcp_backend`        | Verifica ao vivo um servidor MCP (`zero mcp check --json`): conecta, lista ferramentas, reporta status. Persiste o resultado no cache local. |
-| `check_mcp_backend_cached` | Retorna o status cached de um servidor se presente; caso contrário, faz verificação ao vivo.          |
-| `load_mcp_status_cache`    | Lê o cache bruto de status MCP do disco para renderização inicial rápida.                             |
+| Command                    | Descrição                                                                                                                                                  |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `list_mcp_backends`        | Lê servidores MCP configurados na config do zero (`zero backends --json`) e faz overlay de status de saúde cached.                                         |
+| `check_mcp_backend`        | Verifica ao vivo um servidor MCP (`zero mcp check --json`): conecta, lista ferramentas, reporta status. Persiste o resultado no cache local.               |
+| `check_mcp_backend_cached` | Retorna o status cached de um servidor se presente; caso contrário, faz verificação ao vivo.                                                               |
+| `load_mcp_status_cache`    | Lê o cache bruto de status MCP do disco para renderização inicial rápida.                                                                                  |
 | `list_mcp_tools`           | Lista todas as ferramentas expostas pelos servidores MCP habilitados (`zero mcp tools list --json`). Retorna `{ name, description }` para cada ferramenta. |
 
 ### Events
 
-| Evento                    | Descrição                                                                                             |
-| ------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Evento                    | Descrição                                                                                                    |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------ |
 | `zero:event`              | Um evento ACP traduzido: `text`, `reasoning`, `tool_call`, `tool_result`, `plan_update`, `run_end`, `error`. |
-| `zero:permission-request` | Um pedido de permissão real do agente, aguardando resposta via `respond_to_permission`.               |
-| `zero:stderr`             | Uma linha do stderr do processo zero (ou linha de stdout não interpretável, logada pra visibilidade). |
-| `zero:process-exited`     | O stream de stdout do processo da sessão fechou.                                                      |
+| `zero:permission-request` | Um pedido de permissão real do agente, aguardando resposta via `respond_to_permission`.                      |
+| `zero:stderr`             | Uma linha do stderr do processo zero (ou linha de stdout não interpretável, logada pra visibilidade).        |
+| `zero:process-exited`     | O stream de stdout do processo da sessão fechou.                                                             |
 
 #### Tipos de evento dentro de `zero:event`
 
-| Tipo             | Descrição                                                                          |
-| ---------------- | ------------------------------------------------------------------------------------ |
-| `text`           | Delta de resposta do assistente em streaming (`{ delta: string }`).                  |
-| `reasoning`      | Pedaço de pensamento do agente em streaming (`{ delta: string }`).                   |
-| `tool_call`      | Agente iniciou uma chamada de ferramenta (`{ id, name, args }`).                     |
-| `tool_result`    | Chamada de ferramenta concluída ou falhou (`{ id, status: "ok"\|"error", output }`). |
-| `plan_update`    | Checklist do plano do agente atualizada (`{ entries: [{ content, status, priority }] }`). |
-| `run_end`        | Turno finalizado (`{ status, stopReason }`).                                         |
-| `error`          | Erro fatal do bridge (`{ message }`).                                                |
+| Tipo          | Descrição                                                                                 |
+| ------------- | ----------------------------------------------------------------------------------------- |
+| `text`        | Delta de resposta do assistente em streaming (`{ delta: string }`).                       |
+| `reasoning`   | Pedaço de pensamento do agente em streaming (`{ delta: string }`).                        |
+| `tool_call`   | Agente iniciou uma chamada de ferramenta (`{ id, name, args }`).                          |
+| `tool_result` | Chamada de ferramenta concluída ou falhou (`{ id, status: "ok"\|"error", output }`).      |
+| `plan_update` | Checklist do plano do agente atualizada (`{ entries: [{ content, status, priority }] }`). |
+| `run_end`     | Turno finalizado (`{ status, stopReason }`).                                              |
+| `error`       | Erro fatal do bridge (`{ message }`).                                                     |
 
 ### Dependências
 

@@ -15,8 +15,8 @@
       <!-- Header -->
       <div class="mcp-drawer__header">
         <div class="mcp-drawer__header-title">
-          <q-icon name="dns" size="18px" class="q-mr-sm" color="primary" />
-          {{ $t("mcp.title") }}
+          <q-icon name="info" size="18px" class="q-mr-sm" color="primary" />
+          {{ $t("mcp.drawerTitle") }}
         </div>
         <div class="mcp-drawer__header-actions">
           <button
@@ -40,137 +40,147 @@
         </div>
       </div>
 
-      <!-- Edited files (current session) -->
-      <div class="mcp-drawer__files">
-        <div class="mcp-drawer__files-title">{{ $t("mcp.editedFilesTitle") }}</div>
-
-        <div v-if="editedFiles.length === 0" class="mcp-drawer__files-empty-hint">
-          {{ $t("mcp.editedFilesEmpty") }}
-        </div>
-
-        <template v-else>
-          <div class="mcp-drawer__files-strip">
-            <button
-              v-for="file in editedFiles"
-              :key="file.path"
-              type="button"
-              class="mcp-file-chip"
-              :class="{ 'mcp-file-chip--active': expandedFilePath === file.path }"
-              @click="toggleFile(file.path)"
-            >
-              <q-icon name="description" size="14px" />
-              <span class="mcp-file-chip__name">{{ basename(file.path) }}</span>
-              <span v-if="file.edits.length > 1" class="mcp-file-chip__badge">{{
-                file.edits.length
-              }}</span>
-              <q-tooltip>{{ file.path }}</q-tooltip>
-            </button>
+      <!-- Two-column content -->
+      <div class="mcp-drawer__columns">
+        <!-- MCP servers column -->
+        <div class="mcp-drawer__column">
+          <div class="mcp-drawer__column-title">
+            <q-icon name="dns" size="14px" class="q-mr-xs" />
+            {{ $t("mcp.title") }}
           </div>
 
-          <div v-if="expandedFile" class="mcp-drawer__diff-panel">
-            <div class="mcp-drawer__diff-header">
-              <span>{{ basename(expandedFile.path) }}</span>
-              <q-tooltip>{{ expandedFile.path }}</q-tooltip>
-              <q-btn round dense flat size="xs" icon="close" @click="expandedFilePath = null" />
+          <div class="mcp-drawer__column-body">
+            <!-- Loading -->
+            <div v-if="isLoading && backends.length === 0" class="mcp-drawer__center">
+              <q-spinner-dots size="40px" color="primary" />
+              <div class="mcp-drawer__hint">{{ $t("mcp.loading") }}</div>
             </div>
-            <div
-              v-for="(edit, i) in expandedFile.edits"
-              :key="edit.id"
-              class="mcp-drawer__diff-edit"
-            >
-              <div v-if="expandedFile.edits.length > 1" class="mcp-drawer__diff-edit-label">
-                {{ $t("mcp.editedFilesEditN", { n: i + 1 }) }}
+
+            <!-- Empty state -->
+            <div v-else-if="!isLoading && backends.length === 0" class="mcp-drawer__center">
+              <div class="mcp-drawer__empty-icon">
+                <q-icon name="dns" size="40px" />
               </div>
-              <pre class="tool-diff-block"><span
-                  v-for="(line, j) in editPreviewFor(edit)"
-                  :key="j"
-                  :class="'tool-diff-line--' + line.type"
-                  >{{ line.text }}</span
-                ></pre>
+              <div class="mcp-drawer__hint">{{ $t("mcp.empty") }}</div>
+              <div class="mcp-drawer__hint-sub">{{ $t("mcp.emptyHint") }}</div>
             </div>
-          </div>
-        </template>
-      </div>
 
-      <!-- Content -->
-      <div class="mcp-drawer__body">
-        <!-- Loading -->
-        <div v-if="isLoading && backends.length === 0" class="mcp-drawer__center">
-          <q-spinner-dots size="40px" color="primary" />
-          <div class="mcp-drawer__hint">{{ $t("mcp.loading") }}</div>
-        </div>
-
-        <!-- Empty state -->
-        <div v-else-if="!isLoading && backends.length === 0" class="mcp-drawer__center">
-          <div class="mcp-drawer__empty-icon">
-            <q-icon name="dns" size="40px" />
-          </div>
-          <div class="mcp-drawer__hint">{{ $t("mcp.empty") }}</div>
-          <div class="mcp-drawer__hint-sub">{{ $t("mcp.emptyHint") }}</div>
-        </div>
-
-        <!-- Server list -->
-        <div v-else class="mcp-drawer__list">
-          <div
-            v-for="backend in backends"
-            :key="backend.name"
-            class="mcp-card"
-            :class="{
-              'mcp-card--ok': backend.status === 'ok',
-              'mcp-card--error': backend.status === 'error',
-            }"
-          >
-            <div class="mcp-card__header">
-              <div class="mcp-card__icon">
-                <q-icon :name="backend.type === 'http' ? 'language' : 'terminal'" size="18px" />
-              </div>
-              <div class="mcp-card__meta">
-                <div class="mcp-card__title">
-                  {{ backend.name }}
+            <!-- Server list -->
+            <div v-else class="mcp-drawer__list">
+              <div
+                v-for="backend in backends"
+                :key="backend.name"
+                class="mcp-card"
+                :class="{
+                  'mcp-card--ok': backend.status === 'ok',
+                  'mcp-card--error': backend.status === 'error',
+                }"
+              >
+                <div class="mcp-card__header">
+                  <div class="mcp-card__icon">
+                    <q-icon :name="backend.type === 'http' ? 'language' : 'terminal'" size="18px" />
+                  </div>
+                  <div class="mcp-card__meta">
+                    <div class="mcp-card__title">
+                      {{ backend.name }}
+                    </div>
+                    <div class="mcp-card__subtitle">
+                      <span
+                        class="mcp-card__type"
+                        :class="{
+                          'mcp-card__type--http': backend.type === 'http',
+                          'mcp-card__type--stdio': backend.type === 'stdio',
+                        }"
+                        >{{ backend.type }}</span
+                      >
+                      <span v-if="backend.url" class="mcp-card__url">{{
+                        truncateUrl(backend.url)
+                      }}</span>
+                    </div>
+                  </div>
+                  <div class="mcp-card__status">
+                    <q-icon
+                      v-if="backend._checking"
+                      name="hourglass_empty"
+                      size="16px"
+                      class="mcp-card__status-spin"
+                    />
+                    <q-icon
+                      v-else-if="backend.status === 'ok'"
+                      name="check_circle"
+                      size="18px"
+                      class="mcp-card__status-ok"
+                    />
+                    <q-icon
+                      v-else-if="backend.status === 'error'"
+                      name="error"
+                      size="18px"
+                      class="mcp-card__status-error"
+                    />
+                    <q-icon v-else name="cloud" size="18px" class="mcp-card__status-idle" />
+                  </div>
                 </div>
-                <div class="mcp-card__subtitle">
-                  <span
-                    class="mcp-card__type"
-                    :class="{
-                      'mcp-card__type--http': backend.type === 'http',
-                      'mcp-card__type--stdio': backend.type === 'stdio',
-                    }"
-                    >{{ backend.type }}</span
-                  >
-                  <span v-if="backend.url" class="mcp-card__url">{{
-                    truncateUrl(backend.url)
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Edited files column -->
+        <div class="mcp-drawer__column">
+          <div class="mcp-drawer__column-title">
+            <q-icon name="description" size="14px" class="q-mr-xs" />
+            {{ $t("mcp.editedFilesTitle") }}
+          </div>
+
+          <div class="mcp-drawer__column-body">
+            <div v-if="editedFiles.length === 0" class="mcp-drawer__files-empty-hint">
+              {{ $t("mcp.editedFilesEmpty") }}
+            </div>
+
+            <template v-else>
+              <div class="mcp-drawer__files-strip">
+                <button
+                  v-for="file in editedFiles"
+                  :key="file.path"
+                  type="button"
+                  class="mcp-file-chip"
+                  :class="{ 'mcp-file-chip--active': expandedFilePath === file.path }"
+                  @click="toggleFile(file.path)"
+                >
+                  <q-icon name="description" size="14px" />
+                  <span class="mcp-file-chip__name">{{ basename(file.path) }}</span>
+                  <span v-if="file.edits.length > 1" class="mcp-file-chip__badge">{{
+                    file.edits.length
                   }}</span>
+                  <q-tooltip>{{ file.path }}</q-tooltip>
+                </button>
+              </div>
+
+              <div v-if="expandedFile" class="mcp-drawer__diff-panel">
+                <div class="mcp-drawer__diff-header">
+                  <span>{{ basename(expandedFile.path) }}</span>
+                  <q-tooltip>{{ expandedFile.path }}</q-tooltip>
+                  <q-btn round dense flat size="xs" icon="close" @click="expandedFilePath = null" />
+                </div>
+                <div
+                  v-for="(edit, i) in expandedFile.edits"
+                  :key="edit.id"
+                  class="mcp-drawer__diff-edit"
+                >
+                  <div v-if="expandedFile.edits.length > 1" class="mcp-drawer__diff-edit-label">
+                    {{ $t("mcp.editedFilesEditN", { n: i + 1 }) }}
+                  </div>
+                  <pre class="tool-diff-block"><span
+                      v-for="(line, j) in editPreviewFor(edit)"
+                      :key="j"
+                      :class="'tool-diff-line--' + line.type"
+                      >{{ line.text }}</span
+                    ></pre>
                 </div>
               </div>
-              <div class="mcp-card__status">
-                <q-icon
-                  v-if="backend._checking"
-                  name="hourglass_empty"
-                  size="16px"
-                  class="mcp-card__status-spin"
-                />
-                <q-icon
-                  v-else-if="backend.status === 'ok'"
-                  name="check_circle"
-                  size="18px"
-                  class="mcp-card__status-ok"
-                />
-                <q-icon
-                  v-else-if="backend.status === 'error'"
-                  name="error"
-                  size="18px"
-                  class="mcp-card__status-error"
-                />
-                <q-icon v-else name="cloud" size="18px" class="mcp-card__status-idle" />
-              </div>
-            </div>
+            </template>
           </div>
         </div>
-      </div>
-
-      <!-- Footer -->
-      <div class="mcp-drawer__footer">
-        <div class="mcp-drawer__footer-hint">{{ $t("mcp.footerHint") }}</div>
       </div>
     </div>
   </q-drawer>
@@ -370,18 +380,44 @@ function truncateUrl(url) {
   cursor: not-allowed;
 }
 
-.mcp-drawer__files {
-  padding: 10px 14px 12px;
-  border-bottom: 1px solid rgba(128, 128, 128, 0.14);
+.mcp-drawer__columns {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
-.mcp-drawer__files-title {
+.mcp-drawer__column {
+  flex: 1 1 50%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.mcp-drawer__column + .mcp-drawer__column {
+  border-top: 1px solid rgba(128, 128, 128, 0.14);
+}
+
+.mcp-drawer__column-title {
+  display: flex;
+  align-items: center;
+  padding: 10px 14px;
   font-size: 0.72em;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.4px;
   color: var(--chat-text-muted);
-  margin-bottom: 6px;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.14);
+  flex-shrink: 0;
+}
+
+.mcp-drawer__column-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 14px;
 }
 
 .mcp-drawer__files-empty-hint {
@@ -391,8 +427,8 @@ function truncateUrl(url) {
 
 .mcp-drawer__files-strip {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
-  overflow-x: auto;
   padding-bottom: 2px;
 }
 
@@ -512,13 +548,6 @@ body.body--dark .tool-diff-line--removed {
 body.body--dark .tool-diff-line--added {
   background: rgba(25, 210, 77, 0.14);
   color: #6fe396;
-}
-
-.mcp-drawer__body {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 12px 14px;
 }
 
 .mcp-drawer__list {

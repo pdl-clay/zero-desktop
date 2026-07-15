@@ -94,25 +94,25 @@ if let Some(model_id) = active_model_id().await {
 }
 ```
 
-This is stored in `~/.local/share/zero-desktop/session-models.json` (`{ sessionId: modelId }`) and overlaid onto `list_zero_sessions` output, since ACP reports an empty `modelId` in `zero sessions list --json`. The snapshot happens after *every* handshake, not just `session/new`, so a model switch mid-session captures the new model correctly.
+This is stored in `~/.local/share/zero-desktop/session-models.json` (`{ sessionId: modelId }`) and overlaid onto `list_zero_sessions` output, since ACP reports an empty `modelId` in `zero sessions list --json`. The snapshot happens after _every_ handshake, not just `session/new`, so a model switch mid-session captures the new model correctly.
 
 ## Frontend
 
 ### `zero-store.js` — Model State
 
-| State             | Type       | Description                                   |
-| ----------------- | ---------- | --------------------------------------------- |
-| `availableModels` | `string[]` | List of model IDs from the active provider.   |
-| `activeModel`     | `string`   | Currently active model ID.                    |
-| `isLoadingModels` | `bool`     | True while fetching models.                   |
-| `_modelsLoaded`   | `bool`     | Guard to avoid repeated fetches.              |
+| State             | Type       | Description                                 |
+| ----------------- | ---------- | ------------------------------------------- |
+| `availableModels` | `string[]` | List of model IDs from the active provider. |
+| `activeModel`     | `string`   | Currently active model ID.                  |
+| `isLoadingModels` | `bool`     | True while fetching models.                 |
+| `_modelsLoaded`   | `bool`     | Guard to avoid repeated fetches.            |
 
 ### Actions
 
-| Action                          | Description                                                                                         |
-| ------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `loadAvailableModels({ force })`| Calls `listZeroModels()`. Caches result in `_modelsLoaded`; pass `force: true` to re-fetch.         |
-| `switchModel(model)`            | Guards against no-op (same model), run-in-progress, and duplicate switches. Calls `switchZeroModel(model)` then updates `activeModel` locally. |
+| Action                           | Description                                                                                                                                    |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `loadAvailableModels({ force })` | Calls `listZeroModels()`. Caches result in `_modelsLoaded`; pass `force: true` to re-fetch.                                                    |
+| `switchModel(model)`             | Guards against no-op (same model), run-in-progress, and duplicate switches. Calls `switchZeroModel(model)` then updates `activeModel` locally. |
 
 ### `ChatInput.vue` — Model Picker
 

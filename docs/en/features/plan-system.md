@@ -65,6 +65,7 @@ The `translate_session_update` function handles `sessionUpdate: "plan"`:
 ```
 
 Each entry in the `entries` array has:
+
 ```json
 {
   "content": "Fix the login bug",
@@ -74,6 +75,7 @@ Each entry in the `entries` array has:
 ```
 
 **Status values** (as emitted by zero's agent):
+
 - `"pending"` — not yet started
 - `"in_progress"` — currently working on
 - `"completed"` — done
@@ -85,8 +87,8 @@ The bridge does not interpret or modify plan entries; it passes them through ver
 
 ### `zero-store.js` — Plan State
 
-| State         | Type    | Description                                                |
-| ------------- | ------- | ---------------------------------------------------------- |
+| State         | Type    | Description                                                    |
+| ------------- | ------- | -------------------------------------------------------------- |
 | `currentPlan` | `Array` | The agent's current plan entries (replaced whole each update). |
 
 ### `activePlan` getter
@@ -129,6 +131,7 @@ if (event.name === "update_plan") {
 ### Plan reset
 
 `currentPlan` is cleared to `[]` when:
+
 - A new session starts (`startSession`).
 - A session is opened from history (`openSession`).
 - The process exits (`handleProcessExited`).
@@ -169,6 +172,7 @@ The plan checklist is rendered directly above the textarea in `ChatInput.vue` wh
 ```
 
 **Behavior:**
+
 - Each item shows a status icon (from `planIcon`) with the corresponding color (from `planColor`).
 - Completed items get strikethrough text.
 - Items in `in_progress` get a spinning animation.

@@ -80,53 +80,54 @@ pub struct McpStatusCache {
 
 **Operações:**
 
-| Função                | Descrição                                                               |
-| --------------------- | ----------------------------------------------------------------------- |
-| `load()`              | Lê cache do disco, retorna cache vazio se ausente ou corrompido.        |
-| `save(cache)`         | Grava cache no disco, criando diretórios pai se necessário.             |
-| `set_status(...)`     | Atualiza entrada de um servidor e persiste.                             |
-| `remove(name)`        | Remove um servidor do cache.                                            |
-| `clear()`             | Esvazia o cache completamente.                                          |
-| `get(name)`           | Retorna clone do status cached de um servidor, se existir.              |
-| `all()`               | Retorna clone de todos os status cached.                                |
+| Função            | Descrição                                                        |
+| ----------------- | ---------------------------------------------------------------- |
+| `load()`          | Lê cache do disco, retorna cache vazio se ausente ou corrompido. |
+| `save(cache)`     | Grava cache no disco, criando diretórios pai se necessário.      |
+| `set_status(...)` | Atualiza entrada de um servidor e persiste.                      |
+| `remove(name)`    | Remove um servidor do cache.                                     |
+| `clear()`         | Esvazia o cache completamente.                                   |
+| `get(name)`       | Retorna clone do status cached de um servidor, se existir.       |
+| `all()`           | Retorna clone de todos os status cached.                         |
 
 O cache usa `thread_local!` com caminho substituível para testes, permitindo que o código de teste aponte o cache para um diretório temporário sem interferir no cache real.
 
 ### Commands em `lib.rs`
 
-| Command                    | Descrição                                                                                                  |
-| -------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `list_mcp_backends`        | Lê `zero backends --json` e faz overlay de status/tool_count/error cached. Retorna `Vec<McpBackendInfo>`.  |
-| `check_mcp_backend`        | Verifica ao vivo um servidor (`zero mcp check --json`), persiste resultado no cache, retorna `McpCheckResult`. |
-| `check_mcp_backend_cached` | Retorna status cached se presente; caso contrário, faz verificação ao vivo.                                |
-| `load_mcp_status_cache`    | Lê o cache bruto do disco para renderização inicial rápida. Retorna `McpStatusCache`.                      |
+| Command                    | Descrição                                                                                                            |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `list_mcp_backends`        | Lê `zero backends --json` e faz overlay de status/tool_count/error cached. Retorna `Vec<McpBackendInfo>`.            |
+| `check_mcp_backend`        | Verifica ao vivo um servidor (`zero mcp check --json`), persiste resultado no cache, retorna `McpCheckResult`.       |
+| `check_mcp_backend_cached` | Retorna status cached se presente; caso contrário, faz verificação ao vivo.                                          |
+| `load_mcp_status_cache`    | Lê o cache bruto do disco para renderização inicial rápida. Retorna `McpStatusCache`.                                |
 | `list_mcp_tools`           | Lista ferramentas de todos os servidores MCP habilitados (`zero mcp tools list --json`). Retorna `Vec<McpToolInfo>`. |
 
 ## Frontend
 
 ### `zero-store.js` — Estado MCP
 
-| Estado         | Tipo     | Descrição                                         |
-| -------------- | -------- | ------------------------------------------------- |
-| `mcpBackends`  | `Array`  | Servidores MCP configurados com status de saúde.   |
-| `mcpTools`     | `Array`  | Todas as ferramentas dos servidores MCP habilitados. |
-| `isLoadingMcp` | `bool`   | True enquanto backends estão sendo buscados.       |
-| `_mcpLoaded`   | `bool`   | Guarda para evitar buscas repetidas.               |
+| Estado         | Tipo    | Descrição                                            |
+| -------------- | ------- | ---------------------------------------------------- |
+| `mcpBackends`  | `Array` | Servidores MCP configurados com status de saúde.     |
+| `mcpTools`     | `Array` | Todas as ferramentas dos servidores MCP habilitados. |
+| `isLoadingMcp` | `bool`  | True enquanto backends estão sendo buscados.         |
+| `_mcpLoaded`   | `bool`  | Guarda para evitar buscas repetidas.                 |
 
 ### Ações
 
-| Ação                         | Descrição                                                                                             |
-| ---------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Ação                         | Descrição                                                                                                                   |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | `loadMcpBackends({ force })` | Carrega cache primeiro, depois busca backends + ferramentas em paralelo. Se `force` ou sem cache, faz verificações ao vivo. |
-| `checkMcpBackend(name)`      | Verifica ao vivo um backend. Atualiza `mcpBackends[name]` com status/ferramentas/erro inline.         |
-| `checkAllMcpBackends()`      | Executa `checkMcpBackend` para todos os backends em paralelo.                                         |
-| `loadMcpTools({ force })`    | Atualiza apenas a lista global de ferramentas.                                                        |
+| `checkMcpBackend(name)`      | Verifica ao vivo um backend. Atualiza `mcpBackends[name]` com status/ferramentas/erro inline.                               |
+| `checkAllMcpBackends()`      | Executa `checkMcpBackend` para todos os backends em paralelo.                                                               |
+| `loadMcpTools({ force })`    | Atualiza apenas a lista global de ferramentas.                                                                              |
 
 ### Getter `editedFiles`
 
 A store Pinia expõe um getter `editedFiles` que agrupa chamadas `edit_file`/`write_file` por caminho de arquivo, preservando a ordem de encontro e a ordem de edição por arquivo. Derivado puramente de `state.messages`.
 
 O utilitário `isEditTool()` (de `src/utils/edit-tools.js`) reconhece:
+
 - `edit_file` / `write_file` (nativos do zero)
 - `*_edit_file` / `*_write_file` (variantes MCP, ex: `mcp_filesystem_edit_file`)
 

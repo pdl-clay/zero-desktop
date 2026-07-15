@@ -140,38 +140,38 @@ After every successful handshake (`session/new`, `session/load`, or fallback), t
 
 ### `zero-store.js` — Session State
 
-| State              | Type                                | Description                            |
-| ------------------ | ----------------------------------- | -------------------------------------- |
-| `currentSessionId` | `string \| null`                    | ID of the currently viewed session.    |
-| `sessions`         | `Array`                             | Session list for the active workspace. |
-| `messages`         | `Array<typed message>`              | Full message list displayed in `ChatView`. Includes text, thinking, tool_call, permission_request, permission_decision, error. |
-| `currentWorkspace` | `string`                            | Active workspace path.                 |
-| `isLoadingSession` | `boolean`                           | True while `openSession` is fetching history. |
+| State              | Type                   | Description                                                                                                                    |
+| ------------------ | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `currentSessionId` | `string \| null`       | ID of the currently viewed session.                                                                                            |
+| `sessions`         | `Array`                | Session list for the active workspace.                                                                                         |
+| `messages`         | `Array<typed message>` | Full message list displayed in `ChatView`. Includes text, thinking, tool_call, permission_request, permission_decision, error. |
+| `currentWorkspace` | `string`               | Active workspace path.                                                                                                         |
+| `isLoadingSession` | `boolean`              | True while `openSession` is fetching history.                                                                                  |
 
 ### Actions
 
-| Action | Description |
-|---|---|
-| `loadSessions(cwd)` | Calls `listZeroSessions(cwd)` and stores in `this.sessions`. Silently catches errors. |
-| `openSession(sessionId)` | Calls `loadSessionHistory(sessionId)`, runs `buildMessagesFromHistory` to populate `this.messages` with typed message objects. Sets `this.currentSessionId` and starts the 3s sync timer. |
-| `removeSession(sessionId)` | Calls `deleteSession(sessionId)`. If the deleted session was active, stops it first so the bridge stops writing to its directory. Resets state and refreshes the session list. |
-| `renameSession(sessionId, title)` | Calls `renameSession(sessionId, title)` then refreshes the session list. |
-| `startSession(cwd, sessionId?)` | Reconnects the bridge with optional session resume. Clears `messages`, sets `currentWorkspace` and `currentSessionId`. |
+| Action                            | Description                                                                                                                                                                               |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `loadSessions(cwd)`               | Calls `listZeroSessions(cwd)` and stores in `this.sessions`. Silently catches errors.                                                                                                     |
+| `openSession(sessionId)`          | Calls `loadSessionHistory(sessionId)`, runs `buildMessagesFromHistory` to populate `this.messages` with typed message objects. Sets `this.currentSessionId` and starts the 3s sync timer. |
+| `removeSession(sessionId)`        | Calls `deleteSession(sessionId)`. If the deleted session was active, stops it first so the bridge stops writing to its directory. Resets state and refreshes the session list.            |
+| `renameSession(sessionId, title)` | Calls `renameSession(sessionId, title)` then refreshes the session list.                                                                                                                  |
+| `startSession(cwd, sessionId?)`   | Reconnects the bridge with optional session resume. Clears `messages`, sets `currentWorkspace` and `currentSessionId`.                                                                    |
 
 ### History replay (`buildMessagesFromHistory`)
 
 The frontend normalizes persisted events into the same typed message shape used for live events:
 
-| Persisted event type   | Produces                                            |
-| ----------------------- | --------------------------------------------------- |
-| `message` (role=user)   | `{ type: "text", role: "user", content, file? }`    |
-| `message` (role=assistant) | `{ type: "text", role: "assistant", content }`   |
-| `reasoning`             | `{ type: "thinking", content }`                     |
-| `tool_call`             | `{ type: "tool_call", toolName, toolUseId, input }` |
-| `tool_result`           | Updates matching `tool_call` status + result        |
-| `permission_request`    | `{ type: "permission_request", answerable: false }` |
-| `permission_decision`   | Updates matching `permission_request` status        |
-| `error`                 | `{ type: "error", content }`                        |
+| Persisted event type       | Produces                                            |
+| -------------------------- | --------------------------------------------------- |
+| `message` (role=user)      | `{ type: "text", role: "user", content, file? }`    |
+| `message` (role=assistant) | `{ type: "text", role: "assistant", content }`      |
+| `reasoning`                | `{ type: "thinking", content }`                     |
+| `tool_call`                | `{ type: "tool_call", toolName, toolUseId, input }` |
+| `tool_result`              | Updates matching `tool_call` status + result        |
+| `permission_request`       | `{ type: "permission_request", answerable: false }` |
+| `permission_decision`      | Updates matching `permission_request` status        |
+| `error`                    | `{ type: "error", content }`                        |
 
 Permission requests from history are always `answerable: false` — the process that asked is gone. If a matching `permission_decision` event exists, the request's status is updated to `approved` or `denied`; otherwise it renders as expired.
 

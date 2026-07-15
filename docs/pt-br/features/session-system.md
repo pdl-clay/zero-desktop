@@ -140,38 +140,38 @@ Após todo handshake bem-sucedido (`session/new`, `session/load`, ou fallback), 
 
 ### `zero-store.js` — Estado das Sessões
 
-| Estado             | Tipo                                | Descrição                                 |
-| ------------------ | ----------------------------------- | ----------------------------------------- |
-| `currentSessionId` | `string \| null`                    | ID da sessão atualmente visualizada.      |
-| `sessions`         | `Array`                             | Lista de sessões do workspace ativo.      |
-| `messages`         | `Array<mensagem tipada>`            | Lista completa de mensagens exibida no `ChatView`. Inclui text, thinking, tool_call, permission_request, permission_decision, error. |
-| `currentWorkspace` | `string`                            | Caminho do workspace ativo.               |
-| `isLoadingSession` | `boolean`                           | True enquanto `openSession` busca histórico. |
+| Estado             | Tipo                     | Descrição                                                                                                                            |
+| ------------------ | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `currentSessionId` | `string \| null`         | ID da sessão atualmente visualizada.                                                                                                 |
+| `sessions`         | `Array`                  | Lista de sessões do workspace ativo.                                                                                                 |
+| `messages`         | `Array<mensagem tipada>` | Lista completa de mensagens exibida no `ChatView`. Inclui text, thinking, tool_call, permission_request, permission_decision, error. |
+| `currentWorkspace` | `string`                 | Caminho do workspace ativo.                                                                                                          |
+| `isLoadingSession` | `boolean`                | True enquanto `openSession` busca histórico.                                                                                         |
 
 ### Ações
 
-| Ação | Descrição |
-|---|---|
-| `loadSessions(cwd)` | Chama `listZeroSessions(cwd)` e armazena em `this.sessions`. Erros são silenciosamente ignorados. |
-| `openSession(sessionId)` | Chama `loadSessionHistory(sessionId)`, executa `buildMessagesFromHistory` para popular `this.messages` com objetos de mensagem tipados. Define `this.currentSessionId` e inicia o timer de sync de 3s. |
-| `removeSession(sessionId)` | Chama `deleteSession(sessionId)`. Se a sessão excluída estava ativa, para ela primeiro. Reseta estado e atualiza a lista de sessões. |
-| `renameSession(sessionId, title)` | Chama `renameSession(sessionId, title)` e então atualiza a lista de sessões. |
-| `startSession(cwd, sessionId?)` | Reconecta o bridge com opção de resume da sessão. Limpa `messages`, define `currentWorkspace` e `currentSessionId`. |
+| Ação                              | Descrição                                                                                                                                                                                              |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `loadSessions(cwd)`               | Chama `listZeroSessions(cwd)` e armazena em `this.sessions`. Erros são silenciosamente ignorados.                                                                                                      |
+| `openSession(sessionId)`          | Chama `loadSessionHistory(sessionId)`, executa `buildMessagesFromHistory` para popular `this.messages` com objetos de mensagem tipados. Define `this.currentSessionId` e inicia o timer de sync de 3s. |
+| `removeSession(sessionId)`        | Chama `deleteSession(sessionId)`. Se a sessão excluída estava ativa, para ela primeiro. Reseta estado e atualiza a lista de sessões.                                                                   |
+| `renameSession(sessionId, title)` | Chama `renameSession(sessionId, title)` e então atualiza a lista de sessões.                                                                                                                           |
+| `startSession(cwd, sessionId?)`   | Reconecta o bridge com opção de resume da sessão. Limpa `messages`, define `currentWorkspace` e `currentSessionId`.                                                                                    |
 
 ### Reprodução de histórico (`buildMessagesFromHistory`)
 
 O frontend normaliza eventos persistidos no mesmo formato de mensagem tipada usado para eventos ao vivo:
 
-| Tipo de evento persistido | Produz                                              |
-| ------------------------- | --------------------------------------------------- |
-| `message` (role=user)     | `{ type: "text", role: "user", content, file? }`    |
-| `message` (role=assistant)| `{ type: "text", role: "assistant", content }`      |
-| `reasoning`               | `{ type: "thinking", content }`                     |
-| `tool_call`               | `{ type: "tool_call", toolName, toolUseId, input }` |
-| `tool_result`             | Atualiza status + resultado do `tool_call`          |
-| `permission_request`      | `{ type: "permission_request", answerable: false }` |
-| `permission_decision`     | Atualiza status do `permission_request`             |
-| `error`                   | `{ type: "error", content }`                        |
+| Tipo de evento persistido  | Produz                                              |
+| -------------------------- | --------------------------------------------------- |
+| `message` (role=user)      | `{ type: "text", role: "user", content, file? }`    |
+| `message` (role=assistant) | `{ type: "text", role: "assistant", content }`      |
+| `reasoning`                | `{ type: "thinking", content }`                     |
+| `tool_call`                | `{ type: "tool_call", toolName, toolUseId, input }` |
+| `tool_result`              | Atualiza status + resultado do `tool_call`          |
+| `permission_request`       | `{ type: "permission_request", answerable: false }` |
+| `permission_decision`      | Atualiza status do `permission_request`             |
+| `error`                    | `{ type: "error", content }`                        |
 
 Pedidos de permissão do histórico são sempre `answerable: false` — o processo que perguntou já se foi. Se existir um evento `permission_decision` correspondente, o status do pedido é atualizado para `approved` ou `denied`; caso contrário, renderiza como expirado.
 

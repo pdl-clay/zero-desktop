@@ -112,14 +112,14 @@ The bridge spawns a new `zero acp` process with `session/new` in that workspace 
 
 ### Tauri Commands
 
-| Command                                | File        | Description                                                       |
-| -------------------------------------- | ----------- | ----------------------------------------------------------------- |
-| `locate_zero_cli`                      | `lib.rs`    | Finds zero binary and returns path + version.                     |
-| `start_zero_session(cwd, session_id?)` | `lib.rs`    | Spawns `zero acp` in the workspace directory. Optional `session_id` for `session/load`. |
-| `send_zero_message(content, file?)`    | `lib.rs`    | Sends a user message with optional file attachment.               |
-| `stop_zero_session`                    | `lib.rs`    | Kills the current zero process and clears all session state.      |
-| `cancel_zero_run`                      | `lib.rs`    | Kills the process but preserves session id/history for reattach.  |
-| `list_zero_sessions(cwd)`              | `lib.rs`    | Lists sessions filtered by workspace directory.                   |
+| Command                                | File     | Description                                                                             |
+| -------------------------------------- | -------- | --------------------------------------------------------------------------------------- |
+| `locate_zero_cli`                      | `lib.rs` | Finds zero binary and returns path + version.                                           |
+| `start_zero_session(cwd, session_id?)` | `lib.rs` | Spawns `zero acp` in the workspace directory. Optional `session_id` for `session/load`. |
+| `send_zero_message(content, file?)`    | `lib.rs` | Sends a user message with optional file attachment.                                     |
+| `stop_zero_session`                    | `lib.rs` | Kills the current zero process and clears all session state.                            |
+| `cancel_zero_run`                      | `lib.rs` | Kills the process but preserves session id/history for reattach.                        |
+| `list_zero_sessions(cwd)`              | `lib.rs` | Lists sessions filtered by workspace directory.                                         |
 
 ### Bridge State (`bridge.rs`)
 

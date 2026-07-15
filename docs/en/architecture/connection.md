@@ -67,12 +67,12 @@ zero already indexes sessions (`zero sessions list --json`) and writes its own `
 
 zero-desktop maintains several small JSON files under `<app_data_dir>/zero-desktop/` for data that ACP does not surface:
 
-| File | Purpose |
-|---|---|
-| `session-history/<sessionId>.jsonl` | Rich per-session log (messages, tool calls, reasoning, permissions) |
-| `session-titles.json` | `{ sessionId: title }` — auto-derived from first message or user-renamed |
-| `session-models.json` | `{ sessionId: modelId }` — which model was active when the session was created |
-| `mcp-status-cache.json` | Last-known health status for each MCP backend |
+| File                                | Purpose                                                                        |
+| ----------------------------------- | ------------------------------------------------------------------------------ |
+| `session-history/<sessionId>.jsonl` | Rich per-session log (messages, tool calls, reasoning, permissions)            |
+| `session-titles.json`               | `{ sessionId: title }` — auto-derived from first message or user-renamed       |
+| `session-models.json`               | `{ sessionId: modelId }` — which model was active when the session was created |
+| `mcp-status-cache.json`             | Last-known health status for each MCP backend                                  |
 
 ## 3. Conversation Flow
 

@@ -85,6 +85,7 @@ export default {
     cancelRun: "Cancelar (Esc)",
   },
   mcp: {
+    drawerTitle: "Informações do projeto",
     title: "Servidores MCP",
     refreshAll: "Atualizar todos",
     loading: "Carregando servidores...",

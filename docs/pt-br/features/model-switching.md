@@ -98,19 +98,19 @@ Isso é armazenado em `~/.local/share/zero-desktop/session-models.json` e sobrep
 
 ### `zero-store.js` — Estado de Modelo
 
-| Estado            | Tipo       | Descrição                                       |
-| ----------------- | ---------- | ----------------------------------------------- |
-| `availableModels` | `string[]` | Lista de IDs de modelos do provedor ativo.      |
-| `activeModel`     | `string`   | ID do modelo atualmente ativo.                  |
-| `isLoadingModels` | `bool`     | True enquanto busca modelos.                    |
-| `_modelsLoaded`   | `bool`     | Guarda para evitar buscas repetidas.            |
+| Estado            | Tipo       | Descrição                                  |
+| ----------------- | ---------- | ------------------------------------------ |
+| `availableModels` | `string[]` | Lista de IDs de modelos do provedor ativo. |
+| `activeModel`     | `string`   | ID do modelo atualmente ativo.             |
+| `isLoadingModels` | `bool`     | True enquanto busca modelos.               |
+| `_modelsLoaded`   | `bool`     | Guarda para evitar buscas repetidas.       |
 
 ### Ações
 
-| Ação                            | Descrição                                                                              |
-| ------------------------------- | -------------------------------------------------------------------------------------- |
-| `loadAvailableModels({ force })`| Chama `listZeroModels()`. Cache no `_modelsLoaded`; passe `force: true` para rebuscar. |
-| `switchModel(model)`            | Guarda contra no-op, run em andamento, e trocas duplicadas. Chama `switchZeroModel`.   |
+| Ação                             | Descrição                                                                              |
+| -------------------------------- | -------------------------------------------------------------------------------------- |
+| `loadAvailableModels({ force })` | Chama `listZeroModels()`. Cache no `_modelsLoaded`; passe `force: true` para rebuscar. |
+| `switchModel(model)`             | Guarda contra no-op, run em andamento, e trocas duplicadas. Chama `switchZeroModel`.   |
 
 ### `ChatInput.vue` — Seletor de Modelo
 

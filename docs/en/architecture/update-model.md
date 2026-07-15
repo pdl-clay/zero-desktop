@@ -73,13 +73,13 @@ The isolated cache is only used when:
 
 zero-desktop stores its own runtime data under `~/.local/share/zero-desktop/` (Linux). Subdirectories and files:
 
-| Path | Purpose |
-|---|---|
-| `bin/zero` | Isolated zero CLI binary (when PATH fallback is used) |
-| `session-history/<sessionId>.jsonl` | Per-session rich event log (ACP mode) |
-| `session-titles.json` | User-set or auto-derived session titles |
-| `session-models.json` | Which model answered each session |
-| `mcp-status-cache.json` | Last-known MCP backend health statuses |
+| Path                                | Purpose                                               |
+| ----------------------------------- | ----------------------------------------------------- |
+| `bin/zero`                          | Isolated zero CLI binary (when PATH fallback is used) |
+| `session-history/<sessionId>.jsonl` | Per-session rich event log (ACP mode)                 |
+| `session-titles.json`               | User-set or auto-derived session titles               |
+| `session-models.json`               | Which model answered each session                     |
+| `mcp-status-cache.json`             | Last-known MCP backend health statuses                |
 
 ## 6. Compatibility Check
 

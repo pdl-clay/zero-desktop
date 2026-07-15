@@ -26,67 +26,67 @@ The connection follows the architecture defined in [`docs/en/architecture/connec
 
 #### Session commands (via `zero acp`)
 
-| Command                 | Description                                                                                                |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `locate_zero_cli`       | Returns the path and version of the zero CLI.                                                              |
-| `start_zero_session`    | Spawns `zero acp` for the given workspace and opens (or loads) a session.                                  |
-| `send_zero_message`     | Sends a `session/prompt`, optionally with a file attachment, streaming progress back via events.           |
-| `respond_to_permission` | Answers a pending `session/request_permission` with a chosen option.                                       |
+| Command                 | Description                                                                                                                                           |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `locate_zero_cli`       | Returns the path and version of the zero CLI.                                                                                                         |
+| `start_zero_session`    | Spawns `zero acp` for the given workspace and opens (or loads) a session.                                                                             |
+| `send_zero_message`     | Sends a `session/prompt`, optionally with a file attachment, streaming progress back via events.                                                      |
+| `respond_to_permission` | Answers a pending `session/request_permission` with a chosen option.                                                                                  |
 | `cancel_zero_run`       | Kills the current session's process (no `session/cancel` method exists). Session id and history are preserved; next `send()` respawns and reattaches. |
-| `stop_zero_session`     | Stops the active session and tears down all state.                                                         |
+| `stop_zero_session`     | Stops the active session and tears down all state.                                                                                                    |
 
 #### Session management commands (via zero CLI)
 
-| Command                 | Description                                                                                                |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `list_zero_sessions`    | Lists sessions for a workspace (`zero sessions list --json`, filtered by `cwd`). Overlays zero-desktop's own titles and model ids. |
-| `load_session_history`  | Loads a session's rich history — prefers zero-desktop's own local log (`session-history/<id>.jsonl`), falls back to zero's own `events.jsonl`. Returns typed events: `message`, `reasoning`, `tool_call`, `tool_result`, `permission_request`, `permission_decision`, `error`. |
-| `delete_session`        | Deletes a session's data: zero-desktop's local history file, title/model overlays, and zero's own session directory. |
-| `rename_session`        | Sets (or overwrites) a session's title in zero-desktop's local title map. Used for both auto-derived titles on first message and explicit user renames. |
+| Command                | Description                                                                                                                                                                                                                                                                    |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `list_zero_sessions`   | Lists sessions for a workspace (`zero sessions list --json`, filtered by `cwd`). Overlays zero-desktop's own titles and model ids.                                                                                                                                             |
+| `load_session_history` | Loads a session's rich history — prefers zero-desktop's own local log (`session-history/<id>.jsonl`), falls back to zero's own `events.jsonl`. Returns typed events: `message`, `reasoning`, `tool_call`, `tool_result`, `permission_request`, `permission_decision`, `error`. |
+| `delete_session`       | Deletes a session's data: zero-desktop's local history file, title/model overlays, and zero's own session directory.                                                                                                                                                           |
+| `rename_session`       | Sets (or overwrites) a session's title in zero-desktop's local title map. Used for both auto-derived titles on first message and explicit user renames.                                                                                                                        |
 
 #### File commands
 
-| Command                 | Description                                                                                                |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `read_file_attachment`  | Reads a file from disk (up to 10 MB), validates the extension, detects image vs. text, rejects binary in text files, and returns it base64-encoded with its MIME type. Used before attaching a file to a message. |
+| Command                | Description                                                                                                                                                                                                       |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `read_file_attachment` | Reads a file from disk (up to 10 MB), validates the extension, detects image vs. text, rejects binary in text files, and returns it base64-encoded with its MIME type. Used before attaching a file to a message. |
 
 #### Model commands
 
-| Command                 | Description                                                                                                |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `list_zero_models`      | Probes the active provider's model-listing endpoint via `zero providers models --json` and returns the full list plus which model is currently active. Not instant — a real network call. |
-| `switch_zero_model`     | Updates the active provider's model globally via `zero providers add --model <x> --set-active`, then kills the live session process so the next message picks up the change. |
+| Command             | Description                                                                                                                                                                               |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `list_zero_models`  | Probes the active provider's model-listing endpoint via `zero providers models --json` and returns the full list plus which model is currently active. Not instant — a real network call. |
+| `switch_zero_model` | Updates the active provider's model globally via `zero providers add --model <x> --set-active`, then kills the live session process so the next message picks up the change.              |
 
 #### MCP commands
 
-| Command                    | Description                                                                                             |
-| -------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `list_mcp_backends`        | Reads configured MCP servers from zero's config (`zero backends --json`) and overlays cached health statuses. |
+| Command                    | Description                                                                                                                               |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `list_mcp_backends`        | Reads configured MCP servers from zero's config (`zero backends --json`) and overlays cached health statuses.                             |
 | `check_mcp_backend`        | Live-checks a single MCP server (`zero mcp check --json`): connects, lists tools, reports status. Persists the result to the local cache. |
-| `check_mcp_backend_cached` | Returns the cached status for a server if present; falls back to a live check otherwise. |
-| `load_mcp_status_cache`    | Reads the raw MCP status cache from disk for fast initial rendering. |
-| `list_mcp_tools`           | Lists all tools exposed by enabled MCP servers (`zero mcp tools list --json`). Returns `{ name, description }` for each tool. |
+| `check_mcp_backend_cached` | Returns the cached status for a server if present; falls back to a live check otherwise.                                                  |
+| `load_mcp_status_cache`    | Reads the raw MCP status cache from disk for fast initial rendering.                                                                      |
+| `list_mcp_tools`           | Lists all tools exposed by enabled MCP servers (`zero mcp tools list --json`). Returns `{ name, description }` for each tool.             |
 
 ### Events
 
-| Event                     | Description                                                                                   |
-| ------------------------- | --------------------------------------------------------------------------------------------- |
+| Event                     | Description                                                                                                 |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------- |
 | `zero:event`              | A translated ACP event: `text`, `reasoning`, `tool_call`, `tool_result`, `plan_update`, `run_end`, `error`. |
-| `zero:permission-request` | A real permission request from the agent, awaiting a reply via `respond_to_permission`.       |
-| `zero:stderr`             | A stderr line from the zero process (or an unparseable stdout line, logged for visibility).   |
-| `zero:process-exited`     | The session's process's stdout stream closed.                                                 |
+| `zero:permission-request` | A real permission request from the agent, awaiting a reply via `respond_to_permission`.                     |
+| `zero:stderr`             | A stderr line from the zero process (or an unparseable stdout line, logged for visibility).                 |
+| `zero:process-exited`     | The session's process's stdout stream closed.                                                               |
 
 #### Event types within `zero:event`
 
-| Type             | Description                                                                          |
-| ---------------- | ------------------------------------------------------------------------------------ |
-| `text`           | Streaming assistant reply delta (`{ delta: string }`).                               |
-| `reasoning`      | Streaming agent thought chunk (`{ delta: string }`).                                 |
-| `tool_call`      | Agent started a tool call (`{ id, name, args }`).                                    |
-| `tool_result`    | Tool call completed or failed (`{ id, status: "ok"|"error", output }`).              |
-| `plan_update`    | Agent's plan checklist updated (`{ entries: [{ content, status, priority }] }`).      |
-| `run_end`        | Turn finished (`{ status, stopReason }`).                                            |
-| `error`          | Fatal error from the bridge (`{ message }`).                                         |
+| Type          | Description                                                                      |
+| ------------- | -------------------------------------------------------------------------------- |
+| `text`        | Streaming assistant reply delta (`{ delta: string }`).                           |
+| `reasoning`   | Streaming agent thought chunk (`{ delta: string }`).                             |
+| `tool_call`   | Agent started a tool call (`{ id, name, args }`).                                |
+| `tool_result` | Tool call completed or failed (`{ id, status: "ok"                               | "error", output }`). |
+| `plan_update` | Agent's plan checklist updated (`{ entries: [{ content, status, priority }] }`). |
+| `run_end`     | Turn finished (`{ status, stopReason }`).                                        |
+| `error`       | Fatal error from the bridge (`{ message }`).                                     |
 
 ### Dependencies
 

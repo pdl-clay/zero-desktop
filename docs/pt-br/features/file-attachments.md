@@ -84,9 +84,9 @@ pub struct FileAttachment {
 
 ### Extensões suportadas
 
-| Tipo   | Extensões |
-|--------|-----------|
-| Imagem | png, jpg, jpeg, gif, webp |
+| Tipo   | Extensões                                                                                                                                                |
+| ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Imagem | png, jpg, jpeg, gif, webp                                                                                                                                |
 | Texto  | txt, md, csv, json, yaml, yml, xml, html, htm, css, js, ts, jsx, tsx, py, go, rs, java, kt, swift, c, cpp, cc, cxx, h, hpp, rb, php, sh, sql, dockerfile |
 
 ### Construção de blocos de prompt (`bridge.rs`)
@@ -146,19 +146,19 @@ export async function readFileAttachment(path) {
 
 **`src/utils/file.js`:**
 
-| Função                | Descrição                                                                 |
-| --------------------- | ------------------------------------------------------------------------- |
-| `isImageMimeType(m)`  | `true` se MIME type começa com `image/`.                                  |
-| `isTextMimeType(m)`   | `true` para `text/*`, `application/json`, `application/yaml`, `application/xml`. |
-| `getFileIcon(m, name)`| Retorna ícone Material baseado no MIME type ou extensão do arquivo.       |
+| Função                 | Descrição                                                                        |
+| ---------------------- | -------------------------------------------------------------------------------- |
+| `isImageMimeType(m)`   | `true` se MIME type começa com `image/`.                                         |
+| `isTextMimeType(m)`    | `true` para `text/*`, `application/json`, `application/yaml`, `application/xml`. |
+| `getFileIcon(m, name)` | Retorna ícone Material baseado no MIME type ou extensão do arquivo.              |
 
 **`src/utils/image.js`:**
 
-| Função                      | Descrição                                                          |
-| --------------------------- | ------------------------------------------------------------------ |
+| Função                      | Descrição                                                              |
+| --------------------------- | ---------------------------------------------------------------------- |
 | `base64ToObjectUrl(b64, m)` | Decodifica base64 para URL `blob:` via `Blob` + `URL.createObjectURL`. |
-| `base64ToUint8Array(b64)`   | Decodifica base64 padrão para `Uint8Array` via `atob`.             |
-| `base64ToDataUri(b64, m)`   | Constrói URI `data:` a partir de dados base64. Fallback.           |
+| `base64ToUint8Array(b64)`   | Decodifica base64 padrão para `Uint8Array` via `atob`.                 |
+| `base64ToDataUri(b64, m)`   | Constrói URI `data:` a partir de dados base64. Fallback.               |
 
 ### Reprodução de histórico
 

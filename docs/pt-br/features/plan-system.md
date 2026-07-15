@@ -65,6 +65,7 @@ A função `translate_session_update` trata `sessionUpdate: "plan"`:
 ```
 
 Cada entrada no array `entries` tem:
+
 ```json
 {
   "content": "Corrigir o bug de login",
@@ -74,6 +75,7 @@ Cada entrada no array `entries` tem:
 ```
 
 **Valores de status** (como emitidos pelo agente do zero):
+
 - `"pending"` — ainda não iniciado
 - `"in_progress"` — trabalhando atualmente
 - `"completed"` — concluído
@@ -85,8 +87,8 @@ O bridge não interpreta nem modifica as entradas do plano; apenas as repassa. O
 
 ### `zero-store.js` — Estado do Plano
 
-| Estado        | Tipo    | Descrição                                                    |
-| ------------- | ------- | ------------------------------------------------------------ |
+| Estado        | Tipo    | Descrição                                                      |
+| ------------- | ------- | -------------------------------------------------------------- |
 | `currentPlan` | `Array` | Entradas atuais do plano do agente (substituído por completo). |
 
 ### Getter `activePlan`
@@ -125,6 +127,7 @@ if (event.name === "update_plan") {
 ### Reset do plano
 
 `currentPlan` é limpo para `[]` quando:
+
 - Uma nova sessão inicia (`startSession`).
 - Uma sessão é aberta do histórico (`openSession`).
 - O processo termina (`handleProcessExited`).
@@ -165,6 +168,7 @@ A checklist do plano é renderizada diretamente acima do textarea quando `active
 ```
 
 **Comportamento:**
+
 - Cada item mostra ícone de status (de `planIcon`) com a cor correspondente (de `planColor`).
 - Itens concluídos ganham texto tachado.
 - Itens `in_progress` ganham animação giratória.

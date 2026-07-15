@@ -194,28 +194,28 @@ After selection:
 
 Chat translation keys in `src/i18n/`:
 
-| Key                       | pt-BR                  | en-US               |
-| ------------------------- | ---------------------- | ------------------- |
-| `chat.thinking`           | Pensamento             | Thinking            |
-| `chat.thinkingRunning`    | Pensando...            | Thinking...         |
-| `chat.toolRunning`        | em execução...         | running...          |
-| `chat.toolCompleted`      | concluído              | completed           |
-| `chat.writing`            | Escrevendo resposta... | Writing response... |
-| `chat.sending`            | Enviando...            | Sending...          |
-| `chat.showMore`           | Mostrar mais           | Show more           |
-| `chat.showLess`           | Mostrar menos          | Show less           |
-| `chat.copy`               | Copiar                 | Copy                |
-| `chat.permissionRequired` | Permissão necessária   | Permission required |
-| `chat.approve`            | Aprovar                | Approve             |
-| `chat.deny`               | Recusar                | Deny                |
-| `chat.cancelRun`          | Cancelar execução      | Cancel run          |
-| `chat.attachFile`         | Anexar arquivo         | Attach file         |
-| `chat.removeAttachment`   | Remover anexo          | Remove attachment   |
-| `chat.modelLabel`         | Modelo                 | Model               |
-| `chat.switchModel`        | Trocar modelo          | Switch model        |
-| `chat.searchModel`        | Buscar modelo...       | Search model...     |
-| `chat.recentModels`       | Recentes               | Recent              |
-| `chat.loadingModels`      | Carregando modelos...  | Loading models...   |
-| `chat.noModelsMatch`      | Nenhum modelo encontrado | No models match   |
-| `chat.autoAllow`          | Auto                    | Auto                |
-| `chat.ask`                | Perguntar              | Ask                 |
+| Key                       | pt-BR                    | en-US               |
+| ------------------------- | ------------------------ | ------------------- |
+| `chat.thinking`           | Pensamento               | Thinking            |
+| `chat.thinkingRunning`    | Pensando...              | Thinking...         |
+| `chat.toolRunning`        | em execução...           | running...          |
+| `chat.toolCompleted`      | concluído                | completed           |
+| `chat.writing`            | Escrevendo resposta...   | Writing response... |
+| `chat.sending`            | Enviando...              | Sending...          |
+| `chat.showMore`           | Mostrar mais             | Show more           |
+| `chat.showLess`           | Mostrar menos            | Show less           |
+| `chat.copy`               | Copiar                   | Copy                |
+| `chat.permissionRequired` | Permissão necessária     | Permission required |
+| `chat.approve`            | Aprovar                  | Approve             |
+| `chat.deny`               | Recusar                  | Deny                |
+| `chat.cancelRun`          | Cancelar execução        | Cancel run          |
+| `chat.attachFile`         | Anexar arquivo           | Attach file         |
+| `chat.removeAttachment`   | Remover anexo            | Remove attachment   |
+| `chat.modelLabel`         | Modelo                   | Model               |
+| `chat.switchModel`        | Trocar modelo            | Switch model        |
+| `chat.searchModel`        | Buscar modelo...         | Search model...     |
+| `chat.recentModels`       | Recentes                 | Recent              |
+| `chat.loadingModels`      | Carregando modelos...    | Loading models...   |
+| `chat.noModelsMatch`      | Nenhum modelo encontrado | No models match     |
+| `chat.autoAllow`          | Auto                     | Auto                |
+| `chat.ask`                | Perguntar                | Ask                 |

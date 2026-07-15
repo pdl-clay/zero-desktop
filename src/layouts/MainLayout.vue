@@ -275,7 +275,10 @@
       <ChatView v-else :workspace-path="workspacesStore.activePath" @focus-input="onFocusInput" />
     </q-page-container>
 
-    <McpDrawer v-model="mcpDrawerOpen" />
+    <McpDrawer
+      v-if="workspacesStore.hasActive && zeroStore.currentSessionId"
+      v-model="mcpDrawerOpen"
+    />
   </q-layout>
 </template>
 
