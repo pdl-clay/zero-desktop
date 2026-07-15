@@ -40,28 +40,14 @@
               }"
               @mousedown="onAvatarMouseDown($event, index)"
             >
-              <div
-                class="workspace-avatar cursor-pointer"
-                :class="{ active: ws.path === workspacesStore.activePath }"
-                :style="avatarStyle(ws)"
+              <WorkspaceAvatar
+                :name="ws.name"
+                :color="workspaceColor(ws.name)"
+                :is-active="ws.path === workspacesStore.activePath"
+                :is-working="workspaceHasWorkingAgent(ws.path)"
+                :status="workspaceBadge(ws.path)"
                 @click="onSelectWorkspace(ws)"
-              >
-                {{ ws.name.charAt(0).toUpperCase() }}
-                <q-spinner-dots
-                  v-if="workspaceBadge(ws.path) === 'working'"
-                  size="10px"
-                  color="positive"
-                  class="workspace-avatar-badge"
-                />
-                <q-badge
-                  v-else-if="workspaceBadge(ws.path) === 'attention'"
-                  color="warning"
-                  text-color="dark"
-                  class="workspace-avatar-badge workspace-avatar-badge--attention"
-                >
-                  !
-                </q-badge>
-              </div>
+              />
               <q-btn
                 class="workspace-remove-btn"
                 round
@@ -165,23 +151,11 @@
                       @click="onSelectSession(session)"
                     >
                       <q-item-section side>
-                        <div class="row items-center q-gutter-x-xs">
-                          <q-icon :name="sessionIcon(session.kind)" size="16px" color="grey-6" />
-                          <q-spinner-dots
-                            v-if="sessionBadge(session) === 'working'"
-                            size="12px"
-                            color="positive"
-                          />
-                          <q-badge
-                            v-else-if="sessionBadge(session) === 'attention'"
-                            color="warning"
-                            text-color="dark"
-                            class="text-weight-bold"
-                            style="font-size: 9px"
-                          >
-                            !
-                          </q-badge>
-                        </div>
+                        <SessionIndicator
+                          :status="sessionWorkingStatus(session)"
+                          :attention="sessionAttention(session)"
+                          :size="18"
+                        />
                       </q-item-section>
 
                       <q-item-section class="session-item__content">
@@ -303,7 +277,7 @@
     </q-page-container>
 
     <McpDrawer
-      v-if="workspacesStore.hasActive && sessionRuntime.focusedKey"
+      v-if="workspacesStore.hasActive && sessionRuntime.focusedKeyFor(workspacesStore.activePath)"
       v-model="mcpDrawerOpen"
     />
   </q-layout>
@@ -315,7 +289,7 @@ import { useQuasar } from "quasar";
 import { useI18n } from "vue-i18n";
 import { useZeroStore } from "@/stores/zero-store";
 import { useWorkspacesStore } from "@/stores/workspaces-store";
-import { useSessionRuntimeStore } from "@/stores/session-runtime-store";
+import { useSessionRuntimeStore, MAX_OPEN_PANELS } from "@/stores/session-runtime-store";
 import { openOrFocusSession } from "@/stores/session-runtime-store";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
@@ -324,6 +298,9 @@ import {
 } from "@/services/zero";
 import SessionTileGrid from "@/components/SessionTileGrid.vue";
 import McpDrawer from "@/components/McpDrawer.vue";
+import StatusBadge from "@/components/StatusBadge.vue";
+import WorkspaceAvatar from "@/components/WorkspaceAvatar.vue";
+import SessionIndicator from "@/components/SessionIndicator.vue";
 
 const $q = useQuasar();
 const { t } = useI18n();
@@ -381,18 +358,6 @@ function workspaceColor(name) {
   return workspaceColors[Math.abs(hash) % workspaceColors.length];
 }
 
-function avatarStyle(ws) {
-  const isActive = ws.path === workspacesStore.activePath;
-  const color = workspaceColor(ws.name);
-  return {
-    backgroundColor: color,
-    width: isActive ? "40px" : "34px",
-    height: isActive ? "40px" : "34px",
-    fontSize: isActive ? "16px" : "12px",
-    boxShadow: isActive ? `0 0 0 3px #fff, 0 0 0 5px ${color}` : "none",
-  };
-}
-
 const SESSION_TITLE_MAX_CHARS = 20;
 
 function truncateTitle(title) {
@@ -400,17 +365,6 @@ function truncateTitle(title) {
   return title.length > SESSION_TITLE_MAX_CHARS
     ? title.slice(0, SESSION_TITLE_MAX_CHARS) + "…"
     : title;
-}
-
-function sessionIcon(kind) {
-  switch (kind) {
-    case "fork":
-      return "call_split";
-    case "child":
-      return "subdirectory_arrow_right";
-    default:
-      return "chat_bubble_outline";
-  }
 }
 
 const { locale } = useI18n();
@@ -438,14 +392,30 @@ function sessionKeyFor(sessionId) {
   return null;
 }
 
-function sessionBadge(session) {
+function sessionMeta(session) {
   const key = sessionKeyFor(session.session_id);
   if (!key) return null;
-  const meta = sessionRuntime.keyMeta[key];
-  if (!meta) return null;
-  if (meta.hasPendingPermission) return "attention";
-  if (meta.workingStatus) return "working";
+  return sessionRuntime.keyMeta[key];
+}
+
+function sessionWorkingStatus(session) {
+  return sessionMeta(session)?.workingStatus ?? null;
+}
+
+function sessionAttention(session) {
+  return !!sessionMeta(session)?.hasPendingPermission;
+}
+
+function sessionBadge(session) {
+  if (sessionAttention(session)) return "attention";
+  if (sessionWorkingStatus(session)) return "working";
   return null;
+}
+
+function workspaceHasWorkingAgent(path) {
+  return Object.values(sessionRuntime.keyMeta).some(
+    (m) => m.cwd === path && m.workingStatus && !m.hasPendingPermission,
+  );
 }
 
 function isSessionOpen(session) {
@@ -455,16 +425,12 @@ function isSessionOpen(session) {
 
 function workspaceBadge(path) {
   const meta = sessionRuntime.keyMeta;
-  let hasWorking = false;
   let hasAttention = false;
   for (const info of Object.values(meta)) {
     if (info.cwd !== path) continue;
     if (info.hasPendingPermission) hasAttention = true;
-    else if (info.workingStatus) hasWorking = true;
   }
-  if (hasAttention) return "attention";
-  if (hasWorking) return "working";
-  return null;
+  return hasAttention ? "attention" : null;
 }
 
 onMounted(async () => {
@@ -496,6 +462,21 @@ watch(
 async function onSelectWorkspace(ws) {
   sessionPanelOpen.value = true;
   workspacesStore.select(ws.path);
+
+  const hasOpenSessionForWorkspace = Object.values(sessionRuntime.keyMeta).some(
+    (m) => m.cwd === ws.path,
+  );
+  if (!hasOpenSessionForWorkspace) {
+    const key = crypto.randomUUID();
+    const result = await openOrFocusSession(key, ws.path, null);
+    if (result?.error === "SESSION_CAP_REACHED") {
+      $q.notify({
+        type: "warning",
+        message: t("workspace.sessionCapReached", { max: MAX_OPEN_PANELS }),
+        position: "top",
+      });
+    }
+  }
 }
 
 async function onSelectSession(session) {
@@ -506,7 +487,7 @@ async function onSelectSession(session) {
   if (result?.error === "SESSION_CAP_REACHED") {
     $q.notify({
       type: "warning",
-      message: t("workspace.sessionCapReached", { max: 4 }),
+      message: t("workspace.sessionCapReached", { max: MAX_OPEN_PANELS }),
       position: "top",
     });
     return;
@@ -554,7 +535,7 @@ async function onNewSession() {
   if (result?.error === "SESSION_CAP_REACHED") {
     $q.notify({
       type: "warning",
-      message: t("workspace.sessionCapReached", { max: 4 }),
+      message: t("workspace.sessionCapReached", { max: MAX_OPEN_PANELS }),
       position: "top",
     });
     return;
@@ -769,6 +750,10 @@ function onDocumentMouseUp() {
   transition: none !important;
 }
 
+.dragging-clone .workspace-avatar__ring {
+  display: none;
+}
+
 .workspace-avatar-wrapper {
   position: relative;
   display: flex;
@@ -838,44 +823,6 @@ function onDocumentMouseUp() {
 .workspace-avatar-wrapper:hover .workspace-remove-btn {
   opacity: 1;
   transform: scale(1);
-}
-
-.workspace-avatar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  color: #fff;
-  font-weight: 700;
-  line-height: 1;
-  transition: all 0.2s ease;
-  user-select: none;
-  flex-shrink: 0;
-}
-
-.workspace-avatar:hover {
-  opacity: 0.85;
-  transform: scale(1.12);
-}
-
-.workspace-avatar.active {
-  opacity: 1;
-  transform: scale(1);
-}
-
-.workspace-avatar-badge {
-  position: absolute;
-  bottom: -2px;
-  right: -2px;
-  z-index: 2;
-}
-
-.workspace-avatar-badge--attention {
-  font-size: 8px;
-  min-width: 14px;
-  height: 14px;
-  padding: 0 2px;
-  border-radius: 7px;
 }
 
 .session-item-wrapper {

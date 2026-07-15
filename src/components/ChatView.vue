@@ -11,8 +11,6 @@
       {{ globalStore.zeroError }}
     </q-banner>
 
-    <WorkingIndicator />
-
     <div
       class="col chat-messages-scroll q-pa-md"
       ref="messagesContainer"
@@ -143,7 +141,6 @@ import ToolCallMessage from "@/components/chat/ToolCallMessage.vue";
 import PermissionDecisionBadge from "@/components/chat/PermissionDecisionBadge.vue";
 import PendingPermissionPanel from "@/components/chat/PendingPermissionPanel.vue";
 import ErrorMessage from "@/components/chat/ErrorMessage.vue";
-import WorkingIndicator from "@/components/chat/WorkingIndicator.vue";
 import ChatInput from "@/components/chat/ChatInput.vue";
 import PlanPanel from "@/components/chat/PlanPanel.vue";
 

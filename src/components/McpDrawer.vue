@@ -210,6 +210,7 @@
 import { ref, computed, watch } from "vue";
 import { useQuasar } from "quasar";
 import { useZeroStore } from "@/stores/zero-store";
+import { useWorkspacesStore } from "@/stores/workspaces-store";
 import { useSessionRuntimeStore } from "@/stores/session-runtime-store";
 import { useZeroSessionStore } from "@/stores/zero-session-store";
 import { storeToRefs } from "pinia";
@@ -217,11 +218,18 @@ import { getEditStrings } from "@/utils/edit-tools";
 
 const $q = useQuasar();
 const zeroStore = useZeroStore();
+const workspacesStore = useWorkspacesStore();
 const sessionRuntime = useSessionRuntimeStore();
 const { mcpBackends: backends, isLoadingMcp: isLoading } = storeToRefs(zeroStore);
 
+// The panel in focus is tracked per-workspace now (see
+// session-runtime-store.js), so the drawer's file list follows whichever
+// panel has focus WITHIN the currently active workspace, not a stale one
+// left over from a workspace the user has since switched away from.
+const focusedKey = computed(() => sessionRuntime.focusedKeyFor(workspacesStore.activePath));
+
 const focusedSessionStore = computed(() => {
-  const key = sessionRuntime.focusedKey;
+  const key = focusedKey.value;
   if (!key) return null;
   return useZeroSessionStore(key);
 });
@@ -274,12 +282,9 @@ function editPreviewFor(message) {
 // reset on session switch - guards against a same-named file existing in
 // both the old and new session (editedFiles itself already updates on its
 // own via the store getter, no watcher needed for that part).
-watch(
-  () => sessionRuntime.focusedKey,
-  () => {
-    expandedFilePath.value = null;
-  },
-);
+watch(focusedKey, () => {
+  expandedFilePath.value = null;
+});
 
 const emit = defineEmits(["update:modelValue"]);
 

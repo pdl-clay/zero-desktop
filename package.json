@@ -21,6 +21,10 @@
     "postinstall": "quasar prepare --silent"
   },
   "dependencies": {
+    "@iconify-json/fluent": "^1.2.18",
+    "@iconify-json/line-md": "^1.2.16",
+    "@iconify-json/svg-spinners": "^1.2.4",
+    "@iconify/vue": "^5.0.1",
     "@quasar/extras": "^2.0.0",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-dialog": "^2.7.1",

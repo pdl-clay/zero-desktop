@@ -13,10 +13,13 @@ use crate::acp::{parse_line, AcpMessage, AcpPeer};
 use crate::locator::locate_zero;
 use crate::{AttachmentKind, FileAttachment};
 
-/// Maximum number of `zero acp` child processes that may be live at the same
-/// time. This intentionally equals the maximum number of open panels in the
-/// frontend (decision #5): there is no read-only panel beyond this limit.
-pub const MAX_CONCURRENT_SESSIONS: usize = 4;
+/// The backend imposes no hard limit on the number of `zero acp` child
+/// processes that may be live at the same time - the user manages them freely.
+/// The frontend enforces a per-workspace panel cap (see `MAX_OPEN_PANELS` in
+/// `session-runtime-store.js`), but there is no global process cap here.
+///
+/// `live_count_sync` is kept for `list_live_sessions` / diagnostics even though
+/// it is no longer used as a gate.
 
 /// Events emitted to the frontend on `zero:event`. Kept in the same shape
 /// zero's old stream-json protocol used ({schemaVersion, type, ...payload})
@@ -612,13 +615,6 @@ impl ZeroBridge {
         }
     }
 
-    /// How many sessions currently have a live process. The limit is enforced
-    /// against this, not the total number of tracked sessions, so a cancelled
-    /// session doesn't occupy a slot until it is respawned.
-    fn live_count_sync(sessions: &HashMap<String, AcpSession>) -> usize {
-        sessions.values().filter(|s| s.live.is_some()).count()
-    }
-
     /// Spawn `zero acp`, complete the `initialize` handshake, and open a
     /// session (`session/load` when `resume_id` is given, falling back to
     /// `session/new` if that fails; plain `session/new` otherwise). Spawns
@@ -911,12 +907,9 @@ impl ZeroBridge {
                     });
                 }
             }
-            if Self::live_count_sync(&sessions) >= MAX_CONCURRENT_SESSIONS {
-                return Err(format!(
-                    "SESSION_CAP_REACHED: {} sessions are already running. Stop one before starting another.",
-                    MAX_CONCURRENT_SESSIONS
-                ));
-            }
+            // No global process cap - the user may run as many concurrent
+            // `zero acp` sessions as their machine can handle. The frontend
+            // enforces a per-workspace panel limit instead.
         }
 
         let known_history_path = match resume_id.as_deref() {
@@ -929,16 +922,6 @@ impl ZeroBridge {
         let history_path = history_path_for(&session_id)?;
 
         let mut sessions = self.sessions.lock().await;
-        if Self::live_count_sync(&sessions) >= MAX_CONCURRENT_SESSIONS {
-            // Another call filled the last slot while we were handshaking. Kill the
-            // freshly spawned process rather than exceeding the cap.
-            let mut just_spawned = LiveProcess { child, peer };
-            Self::kill_live(&mut just_spawned).await;
-            return Err(format!(
-                "SESSION_CAP_REACHED: {} sessions are already running. Stop one before starting another.",
-                MAX_CONCURRENT_SESSIONS
-            ));
-        }
         sessions.insert(
             key.clone(),
             AcpSession {

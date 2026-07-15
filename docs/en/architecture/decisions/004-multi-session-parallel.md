@@ -26,8 +26,13 @@ session never kills an existing one.
 4. **Indicators**: badges/spinners on session list items and workspace avatars
    show which sessions are processing in the background, with a distinct
    "needs attention" state for pending permissions.
-5. **Limit = 4, unified**: max 4 live processes AND max 4 open panels — no
-   read-only panel beyond the cap.
+5. **No global process cap (updated)**: the backend imposes no limit on the
+   number of live `zero acp` processes — the user manages them freely. The
+   frontend enforces a **per-workspace** panel cap of 4 (`MAX_OPEN_PANELS` in
+   `session-runtime-store.js`): each workspace can have up to 4 open panels,
+   and panels from other workspaces keep running in the background without
+   counting against another workspace's limit. This lets the user work with
+   two workspaces simultaneously, each with up to 4 running panels.
 6. **Model switch affects only the focused session**: other background sessions
    continue with their previous model.
 7. **Responsive panels**: each panel adapts its content to the available width
@@ -50,9 +55,11 @@ listeners filter by their own key.
 this also fixes a pre-existing bug where the frontend's `currentSessionId` was
 never updated to the real CLI-assigned id.
 
-The cap is enforced with a double-check (before and after the ACP handshake) on
-`live_count` (sessions with a live process), returning an error prefixed
-`SESSION_CAP_REACHED` when exceeded.
+The cap is enforced in `openOrFocusSession()` in the frontend's
+`session-runtime-store.js`, checking `panelCountFor(workspacePath)` against
+`MAX_OPEN_PANELS`, returning `{ error: "SESSION_CAP_REACHED" }` when the
+per-workspace limit is exceeded. The Rust `start()` no longer enforces any
+process cap.
 
 ### Frontend: store split
 

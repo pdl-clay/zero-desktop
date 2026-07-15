@@ -102,15 +102,24 @@
 
 <script setup>
 import { ref, computed } from "vue";
-import { storeToRefs } from "pinia";
 import { useQuasar } from "quasar";
 import { useSessionRuntimeStore } from "@/stores/session-runtime-store";
+import { useWorkspacesStore } from "@/stores/workspaces-store";
 import ChatView from "@/components/ChatView.vue";
 import SessionPaneHeader from "@/components/chat/SessionPaneHeader.vue";
 
 const $q = useQuasar();
 const runtime = useSessionRuntimeStore();
-const { openKeys } = storeToRefs(runtime);
+const workspacesStore = useWorkspacesStore();
+
+// Each workspace only ever sees its OWN panels in this grid - a panel
+// belonging to a different workspace keeps running/tracked in the
+// background (see session-runtime-store.js's openKeys, which stays a
+// single flat list across all workspaces), it just isn't rendered here
+// until its workspace becomes active again. That's also what makes the
+// layout "formation" (which keys, in which order) come back exactly as it
+// was when switching back - nothing is torn down on the way out.
+const openKeys = computed(() => runtime.visibleKeys(workspacesStore.activePath));
 
 // q-page-container never gets an explicit CSS height of its own (Quasar only
 // gives it padding for drawer offsets), so the `.fit` (height:100%) chain

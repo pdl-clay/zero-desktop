@@ -28,7 +28,13 @@ uma nova sessão nunca mata uma existente.
 4. **Indicadores**: badges/spinners na lista de sessões e avatares de workspace
    mostram quem está processando em segundo plano, com um estado distinto
    "precisa de atenção" para permissões pendentes.
-5. **Limite = 4, unificado**: máximo de 4 processos vivos E 4 painéis abertos.
+5. **Sem limite global de processos (atualizado)**: o backend não impõe limite
+   no número de processos `zero acp` vivos — o usuário gerencia livremente. O
+   frontend impõe um **limite por workspace** de 4 painéis
+   (`MAX_OPEN_PANELS` em `session-runtime-store.js`): cada workspace pode ter
+   até 4 painéis abertos, e painéis de outros workspaces continuam rodando em
+   segundo plano sem contar contra o limite de outro workspace. Isso permite
+   trabalhar com dois workspaces simultaneamente, cada um com até 4 painéis.
 6. **Troca de modelo afeta apenas a sessão em foco**: demais sessões continuam
    com o modelo anterior.
 7. **Painéis responsivos**: cada painel adapta seu conteúdo à largura
@@ -50,8 +56,11 @@ frontend filtrarem pela sua própria chave.
 também um bug pré-existente onde o `currentSessionId` do frontend nunca era
 atualizado com o id real atribuído pela CLI.
 
-O limite é enforceado com checagem dupla (antes e depois do handshake ACP) sobre
-`live_count`, retornando erro com prefixo `SESSION_CAP_REACHED` ao exceder.
+O limite é enforceado em `openOrFocusSession()` no frontend
+(`session-runtime-store.js`), checando `panelCountFor(workspacePath)` contra
+`MAX_OPEN_PANELS`, retornando `{ error: "SESSION_CAP_REACHED" }` ao exceder o
+limite por workspace. O `start()` no Rust não enforce mais nenhum limite de
+processos.
 
 ### Frontend: divisão de stores
 

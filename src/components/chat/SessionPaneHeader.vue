@@ -1,18 +1,13 @@
 <template>
   <div
     ref="headerRef"
-    :class="['session-pane-header row items-center justify-between q-px-sm q-py-xs', { 'session-pane-header--narrow': isNarrow }]"
+    :class="[
+      'session-pane-header row items-center justify-between q-px-sm q-py-xs',
+      { 'session-pane-header--narrow': isNarrow },
+    ]"
   >
     <div class="row items-center q-gutter-x-sm" style="min-width: 0">
-      <q-spinner-dots v-if="meta?.workingStatus" size="14px" :color="statusColor" />
-      <q-badge
-        v-else-if="meta?.hasPendingPermission"
-        color="warning"
-        text-color="dark"
-        class="text-weight-bold"
-      >
-        !
-      </q-badge>
+      <StatusBadge v-if="meta?.hasPendingPermission" status="attention" size="16" />
       <span class="session-pane-header__title text-caption text-weight-medium ellipsis">
         {{ title }}
       </span>
@@ -38,6 +33,7 @@
 <script setup>
 import { computed, ref, onMounted, onUnmounted } from "vue";
 import { useSessionRuntimeStore } from "@/stores/session-runtime-store";
+import StatusBadge from "@/components/StatusBadge.vue";
 
 const NARROW_THRESHOLD = 500;
 
@@ -75,14 +71,6 @@ const title = computed(() => {
   if (m.title) return m.title;
   if (m.sessionId) return m.sessionId.slice(-8);
   return "...";
-});
-
-const statusColor = computed(() => {
-  const status = meta.value?.workingStatus;
-  if (status === "thinking") return "amber";
-  if (typeof status === "object" && status?.type === "tool") return "info";
-  if (status === "sending") return "grey";
-  return "positive";
 });
 
 async function onClose() {

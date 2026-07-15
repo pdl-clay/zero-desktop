@@ -175,9 +175,12 @@ export function useZeroSessionStore(key) {
         } catch (error) {
           const globalStore = useZeroStore();
           const errorMsg = String(error);
+          // The backend no longer enforces a global process cap, so
+          // SESSION_CAP_REACHED should never arrive here. Keep the handler
+          // as a defensive no-op in case an old backend is still running.
           if (errorMsg.startsWith("SESSION_CAP_REACHED")) {
             const runtime = useSessionRuntimeStore();
-            runtime.closePanel(this.sessionKey);
+            runtime.closePanel(this.sessionKey, { replaceIfLast: false });
           }
           globalStore.zeroError = error;
           this.isConnected = false;
@@ -194,6 +197,16 @@ export function useZeroSessionStore(key) {
           return;
         }
 
+        // Once actually used, this panel is a real session the user is
+        // having a conversation in, not just the auto-created filler that
+        // keeps the workspace from ever being left with zero panels -
+        // opening a different session from now on must add a new panel
+        // next to this one, not silently replace it (see openPanel).
+        const runtime = useSessionRuntimeStore();
+        if (runtime.keyMeta[this.sessionKey]?.isBlankPlaceholder) {
+          runtime.registerMeta(this.sessionKey, { isBlankPlaceholder: false });
+        }
+
         if (!this.isConnected) {
           await this.startSession(this.cwd, this.sessionId);
         }
@@ -201,6 +214,18 @@ export function useZeroSessionStore(key) {
         if (!this.isConnected) {
           return;
         }
+
+        // The CLI's active model lives in a single global config file, read
+        // live by every running process on every turn - verified empirically
+        // (switching the model in one panel silently changed another
+        // already-running panel's very next answer too, with no restart
+        // involved). There's no per-process override available from the
+        // CLI, so this is the best available mitigation: realign the global
+        // config to what THIS panel believes its own model is, right before
+        // it actually sends, so at least the answer it's about to get
+        // matches what its own picker shows. A residual race remains if two
+        // panels send in the exact same instant.
+        await this._realignModelBeforeSend();
 
         this.addUserMessage(content, file);
         this.currentResponse = "";
@@ -215,6 +240,21 @@ export function useZeroSessionStore(key) {
           globalStore.zeroError = error;
           this.runInProgress = false;
           this._syncRuntimeMeta();
+        }
+      },
+
+      // See sendMessage above for why this exists. Only acts if this
+      // session has an opinion (activeModel set) that has drifted from the
+      // global config - a brand-new not-yet-connected session has neither,
+      // so it just inherits whatever's currently active, same as before.
+      async _realignModelBeforeSend() {
+        const globalStore = useZeroStore();
+        if (!this.activeModel || this.activeModel === globalStore.activeModel) return;
+        try {
+          await switchZeroModel(this.sessionKey, this.activeModel);
+          globalStore.activeModel = this.activeModel;
+        } catch (error) {
+          globalStore.zeroError = error;
         }
       },
 
