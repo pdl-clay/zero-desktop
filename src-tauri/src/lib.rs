@@ -3,7 +3,7 @@ pub mod bridge;
 pub mod locator;
 pub mod mcp_cache;
 
-use bridge::{history_path_for, ZeroBridge};
+use bridge::{history_path_for, LiveSessionInfo, StartedSession, ZeroBridge};
 use bridge::{get_session_title, remove_session_title, set_session_title};
 use bridge::{get_session_model, remove_session_model};
 use base64::Engine;
@@ -475,29 +475,37 @@ async fn list_mcp_tools() -> Result<Vec<McpToolInfo>, String> {
 #[tauri::command]
 async fn start_zero_session(
     state: tauri::State<'_, Arc<ZeroBridge>>,
+    key: String,
     cwd: PathBuf,
     session_id: Option<String>,
-) -> Result<(), String> {
-    state.start(cwd, session_id).await
+) -> Result<StartedSession, String> {
+    state.start(key, cwd, session_id).await
 }
 
 #[tauri::command]
 async fn send_zero_message(
     state: tauri::State<'_, Arc<ZeroBridge>>,
+    key: String,
     content: String,
     file: Option<FileAttachment>,
 ) -> Result<(), String> {
-    state.send(content, file).await
+    state.send(key, content, file).await
 }
 
 #[tauri::command]
-async fn stop_zero_session(state: tauri::State<'_, Arc<ZeroBridge>>) -> Result<(), String> {
-    state.stop().await
+async fn stop_zero_session(
+    state: tauri::State<'_, Arc<ZeroBridge>>,
+    key: String,
+) -> Result<(), String> {
+    state.stop(key).await
 }
 
 #[tauri::command]
-async fn cancel_zero_run(state: tauri::State<'_, Arc<ZeroBridge>>) -> Result<(), String> {
-    state.cancel().await
+async fn cancel_zero_run(
+    state: tauri::State<'_, Arc<ZeroBridge>>,
+    key: String,
+) -> Result<(), String> {
+    state.cancel(key).await
 }
 
 #[tauri::command]
@@ -508,10 +516,18 @@ async fn list_zero_models() -> Result<bridge::AvailableModels, String> {
 #[tauri::command]
 async fn switch_zero_model(
     state: tauri::State<'_, Arc<ZeroBridge>>,
+    key: String,
     model: String,
 ) -> Result<(), String> {
     bridge::switch_active_model(&model).await?;
-    state.cancel().await
+    state.cancel(key).await
+}
+
+#[tauri::command]
+async fn list_live_sessions(
+    state: tauri::State<'_, Arc<ZeroBridge>>,
+) -> Result<Vec<LiveSessionInfo>, String> {
+    Ok(state.list_live_sessions().await)
 }
 
 #[tauri::command]
@@ -555,12 +571,19 @@ pub fn run() {
             read_file_attachment,
             list_zero_models,
             switch_zero_model,
+            list_live_sessions,
             list_mcp_backends,
             check_mcp_backend,
             check_mcp_backend_cached,
             load_mcp_status_cache,
             list_mcp_tools
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app_handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                let state = _app_handle.state::<Arc<ZeroBridge>>();
+                tauri::async_runtime::block_on(state.kill_all());
+            }
+        });
 }

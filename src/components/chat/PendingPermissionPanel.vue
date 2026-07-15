@@ -27,14 +27,14 @@
 
 <script setup>
 import { useI18n } from "vue-i18n";
-import { useZeroStore } from "@/stores/zero-store";
+import { inject } from "vue";
 
 const props = defineProps({
   request: { type: Object, required: true },
 });
 
 const { t } = useI18n();
-const zeroStore = useZeroStore();
+const zeroStore = inject("zeroStore");
 
 function isReject(option) {
   const kind = option.kind || "";

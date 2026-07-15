@@ -83,7 +83,7 @@
           type="button"
           class="chat-input__model"
           :class="{
-            'chat-input__model--active': zeroStore.activeModel,
+            'chat-input__model--active': effectiveActiveModel,
             'chat-input__model--collapsed': isNarrowViewport,
           }"
           :disabled="disabled"
@@ -91,7 +91,7 @@
         >
           <q-icon name="memory" size="14px" />
           <span class="chat-input__model-label">{{
-            zeroStore.activeModel || t("chat.modelLabel")
+            effectiveActiveModel || t("chat.modelLabel")
           }}</span>
           <q-icon
             name="expand_more"
@@ -131,13 +131,13 @@
                   :key="`recent-${m}`"
                   :class="[
                     'chat-input__model-item',
-                    { 'chat-input__model-item--active': m === zeroStore.activeModel },
+                    { 'chat-input__model-item--active': m === effectiveActiveModel },
                   ]"
                   @click="selectModel(m)"
                 >
                   <span class="chat-input__model-item-avatar">
                     <q-icon
-                      v-if="m === zeroStore.activeModel"
+                      v-if="m === effectiveActiveModel"
                       name="check_circle"
                       size="18px"
                       color="primary"
@@ -155,13 +155,13 @@
                 :key="m"
                 :class="[
                   'chat-input__model-item',
-                  { 'chat-input__model-item--active': m === zeroStore.activeModel },
+                  { 'chat-input__model-item--active': m === effectiveActiveModel },
                 ]"
                 @click="selectModel(m)"
               >
                 <span class="chat-input__model-item-avatar">
                   <q-icon
-                    v-if="m === zeroStore.activeModel"
+                    v-if="m === effectiveActiveModel"
                     name="check_circle"
                     size="18px"
                     color="primary"
@@ -217,7 +217,7 @@
 </template>
 
 <script setup>
-import { ref, computed, nextTick, watch, onMounted, onBeforeUnmount } from "vue";
+import { ref, computed, nextTick, watch, onMounted, onBeforeUnmount, inject } from "vue";
 import { useQuasar } from "quasar";
 import { useI18n } from "vue-i18n";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -241,6 +241,7 @@ const emit = defineEmits(["update:modelValue", "send", "cancel", "focus"]);
 const $q = useQuasar();
 const { t } = useI18n();
 const zeroStore = useZeroStore();
+const sessionStore = inject("zeroStore");
 const textareaRef = ref(null);
 const focused = ref(false);
 const attachedFile = ref(null);
@@ -253,13 +254,8 @@ const MAX_RECENT_MODELS = 3;
 const recentModelsKey = "zero-recent-models";
 const permissionModeKey = "zero-permission-mode";
 
-// O mesmo breakpoint usado em MainLayout.vue para colapsar o painel direito.
-const LAYOUT_COLLAPSE_BREAKPOINT = 1024;
-const isNarrowViewport = ref($q.screen.width < LAYOUT_COLLAPSE_BREAKPOINT);
-
-function updateNarrowViewport() {
-  isNarrowViewport.value = $q.screen.width < LAYOUT_COLLAPSE_BREAKPOINT;
-}
+const paneWidth = inject("paneWidth", ref(9999));
+const isNarrowViewport = computed(() => paneWidth.value < 500);
 
 const permissionModeLabel = computed(() =>
   zeroStore.permissionMode === "auto_allow" ? t("chat.autoAllow") : t("chat.ask"),
@@ -269,8 +265,15 @@ const permissionModeTooltip = computed(() =>
   zeroStore.permissionMode === "auto_allow" ? t("chat.autoAllowTooltip") : t("chat.askTooltip"),
 );
 
+// The model a session is actually running under is per-session (each
+// session's process keeps whatever model it snapshotted when it last
+// (re)connected - see zero-session-store.js's switchModel/startSession).
+// Falls back to the global store's model only for a panel that hasn't
+// connected yet, so it shows the default it would inherit if it did.
+const effectiveActiveModel = computed(() => sessionStore.activeModel || zeroStore.activeModel);
+
 const recentModels = computed(() => {
-  const active = zeroStore.activeModel;
+  const active = effectiveActiveModel.value;
   const recent = JSON.parse(localStorage.getItem(recentModelsKey) || "[]").filter(
     (m) => typeof m === "string" && zeroStore.availableModels.includes(m) && m !== active,
   );
@@ -285,8 +288,6 @@ const recentModels = computed(() => {
 // @show handler on the q-menu stays as a retry path if this fails silently
 // (e.g. a transient network hiccup probing the provider's model list).
 onMounted(() => {
-  updateNarrowViewport();
-  window.addEventListener("resize", updateNarrowViewport);
   zeroStore.loadAvailableModels();
   const savedMode = localStorage.getItem(permissionModeKey);
   if (savedMode === "ask" || savedMode === "auto_allow") {
@@ -295,7 +296,6 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
-  window.removeEventListener("resize", updateNarrowViewport);
   releaseAttachedFilePreview();
 });
 
@@ -328,7 +328,7 @@ const statusLabel = computed(() => {
 
 const filteredModels = computed(() => {
   const query = modelSearch.value.trim().toLowerCase();
-  const active = zeroStore.activeModel;
+  const active = effectiveActiveModel.value;
   const recent = recentModels.value;
   let list = zeroStore.availableModels.filter((m) => !recent.includes(m));
   if (query) {
@@ -507,7 +507,7 @@ function closeModelMenu() {
 }
 
 function selectModel(model) {
-  zeroStore.switchModel(model);
+  sessionStore.switchModel(model);
   rememberRecentModel(model);
   closeModelMenu();
 }

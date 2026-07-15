@@ -26,14 +26,19 @@ The connection follows the architecture defined in [`docs/en/architecture/connec
 
 #### Session commands (via `zero acp`)
 
-| Command                 | Description                                                                                                                                           |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `locate_zero_cli`       | Returns the path and version of the zero CLI.                                                                                                         |
-| `start_zero_session`    | Spawns `zero acp` for the given workspace and opens (or loads) a session.                                                                             |
-| `send_zero_message`     | Sends a `session/prompt`, optionally with a file attachment, streaming progress back via events.                                                      |
-| `respond_to_permission` | Answers a pending `session/request_permission` with a chosen option.                                                                                  |
-| `cancel_zero_run`       | Kills the current session's process (no `session/cancel` method exists). Session id and history are preserved; next `send()` respawns and reattaches. |
-| `stop_zero_session`     | Stops the active session and tears down all state.                                                                                                    |
+All session commands accept a `key: String` — the frontend-owned routing key
+(UUID for new sessions, `session_id` for resumed ones). Events are tagged with
+the same key so the frontend can route them to the correct panel.
+
+| Command                 | Description                                                                                                                                             |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `locate_zero_cli`       | Returns the path and version of the zero CLI.                                                                                                           |
+| `start_zero_session`    | Spawns `zero acp` for the given key + workspace and opens (or loads) a session. Returns `StartedSession { key, sessionId, reattached }`.                |
+| `send_zero_message`     | Sends a `session/prompt` to the session identified by `key`, optionally with a file attachment, streaming progress back via events.                     |
+| `respond_to_permission` | Answers a pending `session/request_permission` with a chosen option. Routed internally by the pending request's stored `session_key`.                   |
+| `cancel_zero_run`       | Kills the session's process for `key` (no `session/cancel` method exists). Session id and history are preserved; next `send()` respawns and reattaches. |
+| `stop_zero_session`     | Stops the session for `key` and removes its record from the bridge.                                                                                     |
+| `list_live_sessions`    | Returns `Vec<LiveSessionInfo { key, sessionId, cwd, live }>` for all tracked sessions — used by the frontend to reconcile state.                        |
 
 #### Session management commands (via zero CLI)
 
@@ -52,10 +57,10 @@ The connection follows the architecture defined in [`docs/en/architecture/connec
 
 #### Model commands
 
-| Command             | Description                                                                                                                                                                               |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `list_zero_models`  | Probes the active provider's model-listing endpoint via `zero providers models --json` and returns the full list plus which model is currently active. Not instant — a real network call. |
-| `switch_zero_model` | Updates the active provider's model globally via `zero providers add --model <x> --set-active`, then kills the live session process so the next message picks up the change.              |
+| Command             | Description                                                                                                                                                                                                                  |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `list_zero_models`  | Probes the active provider's model-listing endpoint via `zero providers models --json` and returns the full list plus which model is currently active. Not instant — a real network call.                                    |
+| `switch_zero_model` | Updates the active provider's model globally via `zero providers add --model <x> --set-active`, then kills only the session identified by `key` so the next message picks up the change. Other live sessions are unaffected. |
 
 #### MCP commands
 
@@ -69,12 +74,15 @@ The connection follows the architecture defined in [`docs/en/architecture/connec
 
 ### Events
 
-| Event                     | Description                                                                                                 |
-| ------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `zero:event`              | A translated ACP event: `text`, `reasoning`, `tool_call`, `tool_result`, `plan_update`, `run_end`, `error`. |
-| `zero:permission-request` | A real permission request from the agent, awaiting a reply via `respond_to_permission`.                     |
-| `zero:stderr`             | A stderr line from the zero process (or an unparseable stdout line, logged for visibility).                 |
-| `zero:process-exited`     | The session's process's stdout stream closed.                                                               |
+All events carry `sessionKey` in their payload so the frontend can route them
+to the correct panel/store. Listeners filter by `payload.sessionKey`.
+
+| Event                     | Payload                                                | Description                                                                                                 |
+| ------------------------- | ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| `zero:event`              | `{ schemaVersion, type, ...payload, sessionKey }`      | A translated ACP event: `text`, `reasoning`, `tool_call`, `tool_result`, `plan_update`, `run_end`, `error`. |
+| `zero:permission-request` | `{ requestId, toolName, reason, options, sessionKey }` | A real permission request from the agent, awaiting a reply via `respond_to_permission`.                     |
+| `zero:stderr`             | `{ sessionKey, line }`                                 | A stderr line from the zero process (or an unparseable stdout line, logged for visibility).                 |
+| `zero:process-exited`     | `{ sessionKey }`                                       | The session's process's stdout stream closed.                                                               |
 
 #### Event types within `zero:event`
 
@@ -137,27 +145,34 @@ And, via the dedicated `zero:permission-request` event, a real permission ask th
 
 ### Store architecture
 
-The Pinia store (`zero-store.js`) manages:
+The Pinia stores are split into three layers (see [ADR 004](../architecture/decisions/004-multi-session-parallel.md)):
 
-- `messages[]` — typed message list (text, thinking, tool_call, permission_request, permission_decision, error).
-- `currentResponse` / `currentThinking` — streaming buffers finalized into permanent messages on the next event boundary.
-- `currentPlan` — the agent's current plan checklist (replaced whole on each `plan_update`).
-- `activePlan` getter — returns `null` when all items are completed, so the plan panel auto-hides.
-- `editedFiles` getter — groups `edit_file`/`write_file` tool calls by file path, preserving encounter order.
-- `workingStatus` getter — returns `thinking`, `{ type: "tool", toolName }`, `writing`, `sending`, or `null`.
-- `availableModels` / `activeModel` — populated by `list_zero_models` (network call to provider).
-- `mcpBackends` / `mcpTools` — populated by `list_mcp_backends` + `list_mcp_tools`, with cached status overlay.
-- `permissionMode` — `"ask"` (default) or `"auto_allow"` (auto-approves permission requests).
-- `_sessionSyncTimer` — periodic (3s) history re-read while a session is open, catching external changes.
+- **`zero-store.js`** (global, singleton) — `zeroPath`, `availableModels`,
+  `activeModel`, `mcpBackends`, `mcpTools`, `permissionMode`. App-wide state only.
+- **`zero-session-store.js`** (factory, `useZeroSessionStore(key)`) — per-session
+  state: `messages[]`, `currentResponse`, `currentThinking`, `currentPlan`,
+  `runInProgress`, listeners (filtered by `sessionKey`). Getters:
+  `workingStatus`, `activePlan`, `editedFiles`.
+- **`session-runtime-store.js`** (orchestrator) — `openKeys` (panel display
+  order, max 4), `focusedKey`, `keyMeta` (per-key metadata for badges). Actions:
+  `openPanel`, `closePanel` (hide only), `stopAndDispose` (kill process),
+  `openOrFocusSession` (entry point used by the UI).
+
+`ChatView.vue` creates a session store for its `sessionKey` prop and
+`provide("zeroStore", store)` to child components. `ChatInput.vue` uses both the
+injected session store (for `switchModel` — per-session) and the global store
+(for model list, permission mode). `McpDrawer.vue` reads `editedFiles` from the
+focused session's store.
 
 ## Known limitations (alpha)
 
 - No `session/cancel` in the underlying protocol: cancelling a turn kills that session's process; the next message respawns it and reattaches via `session/load`.
 - Network access (e.g. `web_fetch`) gets denied by zero's own sandbox regardless of the permission answered - a hard limit of the current sandbox policy, not something this bridge controls.
-- No multi-workspace tabbed interface yet (single active workspace per session).
+- Concurrent sessions editing the same files (same workspace) can cause write races — a non-blocking warning is shown, but no file-level lock is enforced.
 
 ## References
 
 - [Architecture: Connection](../architecture/connection.md)
 - [ADR 003: Migrate to ACP](../architecture/decisions/003-migrate-to-acp.md)
+- [ADR 004: Multi-Session Parallel Chat](../architecture/decisions/004-multi-session-parallel.md)
 - [Agent Client Protocol](https://agentclientprotocol.com)

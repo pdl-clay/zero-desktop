@@ -47,6 +47,20 @@
                 @click="onSelectWorkspace(ws)"
               >
                 {{ ws.name.charAt(0).toUpperCase() }}
+                <q-spinner-dots
+                  v-if="workspaceBadge(ws.path) === 'working'"
+                  size="10px"
+                  color="positive"
+                  class="workspace-avatar-badge"
+                />
+                <q-badge
+                  v-else-if="workspaceBadge(ws.path) === 'attention'"
+                  color="warning"
+                  text-color="dark"
+                  class="workspace-avatar-badge workspace-avatar-badge--attention"
+                >
+                  !
+                </q-badge>
               </div>
               <q-btn
                 class="workspace-remove-btn"
@@ -128,14 +142,14 @@
 
             <template v-if="workspacesStore.hasActive">
               <div class="text-caption panel-section-label q-mb-sm" style="min-width: 0">
-                {{ $t("workspace.sessions", { count: zeroStore.sessions.length }) }}
+                {{ $t("workspace.sessions", { count: currentSessions.length }) }}
               </div>
 
               <q-scroll-area class="col" style="min-width: 0">
                 <!-- Session list -->
                 <q-list dense class="q-gutter-y-xs">
                   <div
-                    v-for="session in zeroStore.sessions"
+                    v-for="session in currentSessions"
                     :key="session.session_id"
                     class="session-item-wrapper"
                   >
@@ -145,13 +159,29 @@
                       :class="[
                         'session-item q-px-sm',
                         {
-                          'session-item--active': session.session_id === zeroStore.currentSessionId,
+                          'session-item--active': isSessionOpen(session),
                         },
                       ]"
                       @click="onSelectSession(session)"
                     >
                       <q-item-section side>
-                        <q-icon :name="sessionIcon(session.kind)" size="16px" color="grey-6" />
+                        <div class="row items-center q-gutter-x-xs">
+                          <q-icon :name="sessionIcon(session.kind)" size="16px" color="grey-6" />
+                          <q-spinner-dots
+                            v-if="sessionBadge(session) === 'working'"
+                            size="12px"
+                            color="positive"
+                          />
+                          <q-badge
+                            v-else-if="sessionBadge(session) === 'attention'"
+                            color="warning"
+                            text-color="dark"
+                            class="text-weight-bold"
+                            style="font-size: 9px"
+                          >
+                            !
+                          </q-badge>
+                        </div>
                       </q-item-section>
 
                       <q-item-section class="session-item__content">
@@ -200,16 +230,13 @@
                     </q-btn>
                   </div>
 
-                  <div
-                    v-if="zeroStore.sessions.length === 0"
-                    class="text-center panel-empty q-pa-md"
-                  >
+                  <div v-if="currentSessions.length === 0" class="text-center panel-empty q-pa-md">
                     <q-icon name="chat" size="28px" />
                     <div class="text-caption q-mt-xs">{{ $t("workspace.noSessions") }}</div>
                   </div>
 
                   <q-item
-                    v-if="zeroStore.sessions.length > 0"
+                    v-if="currentSessions.length > 0"
                     clickable
                     v-ripple
                     class="session-item session-item--new q-px-sm session-item-wrapper"
@@ -272,32 +299,39 @@
           <div class="text-h6 q-mt-md">{{ $t("workspace.select") }}</div>
         </div>
       </q-page>
-      <ChatView v-else :workspace-path="workspacesStore.activePath" @focus-input="onFocusInput" />
+      <SessionTileGrid v-else />
     </q-page-container>
 
     <McpDrawer
-      v-if="workspacesStore.hasActive && zeroStore.currentSessionId"
+      v-if="workspacesStore.hasActive && sessionRuntime.focusedKey"
       v-model="mcpDrawerOpen"
     />
   </q-layout>
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from "vue";
+import { ref, computed, onMounted, watch } from "vue";
 import { useQuasar } from "quasar";
 import { useI18n } from "vue-i18n";
 import { useZeroStore } from "@/stores/zero-store";
 import { useWorkspacesStore } from "@/stores/workspaces-store";
+import { useSessionRuntimeStore } from "@/stores/session-runtime-store";
+import { openOrFocusSession } from "@/stores/session-runtime-store";
 import { open } from "@tauri-apps/plugin-dialog";
-import ChatView from "@/components/ChatView.vue";
+import {
+  deleteSession as deleteSessionApi,
+  renameSession as renameSessionApi,
+} from "@/services/zero";
+import SessionTileGrid from "@/components/SessionTileGrid.vue";
 import McpDrawer from "@/components/McpDrawer.vue";
 
 const $q = useQuasar();
 const { t } = useI18n();
 const zeroStore = useZeroStore();
 const workspacesStore = useWorkspacesStore();
+const sessionRuntime = useSessionRuntimeStore();
 const leftDrawerOpen = ref(true);
-const mcpDrawerOpen = ref(true);
+const mcpDrawerOpen = ref($q.screen.width >= 1024);
 
 const isSmallScreen = $q.screen.lt.md;
 const sessionPanelOpen = ref(!isSmallScreen);
@@ -392,20 +426,57 @@ function formatDate(iso) {
   );
 }
 
+const currentSessions = computed(
+  () => workspacesStore.sessionsByPath[workspacesStore.activePath] ?? [],
+);
+
+function sessionKeyFor(sessionId) {
+  const meta = sessionRuntime.keyMeta;
+  for (const [key, info] of Object.entries(meta)) {
+    if (info.sessionId === sessionId) return key;
+  }
+  return null;
+}
+
+function sessionBadge(session) {
+  const key = sessionKeyFor(session.session_id);
+  if (!key) return null;
+  const meta = sessionRuntime.keyMeta[key];
+  if (!meta) return null;
+  if (meta.hasPendingPermission) return "attention";
+  if (meta.workingStatus) return "working";
+  return null;
+}
+
+function isSessionOpen(session) {
+  const key = sessionKeyFor(session.session_id);
+  return key ? sessionRuntime.isOpen(key) : false;
+}
+
+function workspaceBadge(path) {
+  const meta = sessionRuntime.keyMeta;
+  let hasWorking = false;
+  let hasAttention = false;
+  for (const info of Object.values(meta)) {
+    if (info.cwd !== path) continue;
+    if (info.hasPendingPermission) hasAttention = true;
+    else if (info.workingStatus) hasWorking = true;
+  }
+  if (hasAttention) return "attention";
+  if (hasWorking) return "working";
+  return null;
+}
+
 onMounted(async () => {
   const saved = localStorage.getItem(THEME_KEY);
   if (saved === "dark") {
     $q.dark.set(true);
   }
-  console.log(
-    "[MainLayout] workspaces loaded:",
-    workspacesStore.workspaces.length,
-    workspacesStore.workspaces,
-  );
   await zeroStore.locateZero();
-  // Pre-load MCP list and cached statuses in the background so the drawer
-  // opens with data already available.
   zeroStore.loadMcpBackends();
+  if (workspacesStore.activePath) {
+    await workspacesStore.loadSessions(workspacesStore.activePath);
+  }
 });
 
 function toggleTheme() {
@@ -415,19 +486,9 @@ function toggleTheme() {
 
 watch(
   () => workspacesStore.activePath,
-  async (newPath, oldPath) => {
-    if (oldPath && zeroStore.isConnected) {
-      await zeroStore.stopSession();
-    }
+  async (newPath) => {
     if (newPath) {
-      zeroStore.currentWorkspace = newPath;
-      zeroStore.currentSessionId = null;
-      zeroStore.messages = [];
-      zeroStore.currentResponse = "";
-      zeroStore.currentThinking = "";
-      zeroStore.currentPlan = [];
-      zeroStore.runInProgress = false;
-      await zeroStore.loadSessions(newPath);
+      await workspacesStore.loadSessions(newPath);
     }
   },
 );
@@ -441,9 +502,15 @@ async function onSelectSession(session) {
   const cwd = workspacesStore.activePath;
   if (!cwd) return;
 
-  await zeroStore.startSession(cwd, session.session_id);
-  await zeroStore.openSession(session.session_id);
-  await zeroStore.loadSessions(cwd);
+  const result = await openOrFocusSession(session.session_id, cwd, session.session_id);
+  if (result?.error === "SESSION_CAP_REACHED") {
+    $q.notify({
+      type: "warning",
+      message: t("workspace.sessionCapReached", { max: 4 }),
+      position: "top",
+    });
+    return;
+  }
 
   if ($q.screen.width < 1024) {
     sessionPanelOpen.value = false;
@@ -451,8 +518,14 @@ async function onSelectSession(session) {
 }
 
 async function onDeleteSession(session) {
-  console.log("[MainLayout] onDeleteSession:", session.session_id, session);
-  await zeroStore.removeSession(session.session_id);
+  const key = sessionKeyFor(session.session_id);
+  if (key && sessionRuntime.isOpen(key)) {
+    await sessionRuntime.stopAndDispose(key);
+  }
+  await deleteSessionApi(session.session_id);
+  if (workspacesStore.activePath) {
+    await workspacesStore.loadSessions(workspacesStore.activePath);
+  }
 }
 
 function onRenameSession(session) {
@@ -464,15 +537,44 @@ function onRenameSession(session) {
     },
     cancel: true,
     persistent: false,
-  }).onOk((title) => {
-    zeroStore.renameSession(session.session_id, title);
+  }).onOk(async (title) => {
+    await renameSessionApi(session.session_id, title);
+    if (workspacesStore.activePath) {
+      await workspacesStore.loadSessions(workspacesStore.activePath);
+    }
   });
 }
 
 async function onNewSession() {
   const cwd = workspacesStore.activePath;
   if (!cwd) return;
-  await zeroStore.startSession(cwd);
+
+  const key = crypto.randomUUID();
+  const result = await openOrFocusSession(key, cwd, null);
+  if (result?.error === "SESSION_CAP_REACHED") {
+    $q.notify({
+      type: "warning",
+      message: t("workspace.sessionCapReached", { max: 4 }),
+      position: "top",
+    });
+    return;
+  }
+
+  const existingKeys = Object.entries(sessionRuntime.keyMeta)
+    .filter(([_, m]) => m.cwd === cwd && m.workingStatus)
+    .map(([k]) => k);
+  if (existingKeys.length > 0) {
+    $q.notify({
+      type: "info",
+      message: t("workspace.sameWorkspaceWarning"),
+      position: "top",
+      timeout: 5000,
+    });
+  }
+
+  if ($q.screen.width < 1024) {
+    sessionPanelOpen.value = false;
+  }
 }
 
 async function onBrowseAndAdd() {
@@ -488,12 +590,6 @@ async function onBrowseAndAdd() {
 
 async function onRemoveWorkspace(ws) {
   workspacesStore.remove(ws.path);
-}
-
-function onFocusInput() {
-  if ($q.screen.width < 1024) {
-    sessionPanelOpen.value = false;
-  }
 }
 
 function onAvatarMouseDown(event, index) {
@@ -765,6 +861,21 @@ function onDocumentMouseUp() {
 .workspace-avatar.active {
   opacity: 1;
   transform: scale(1);
+}
+
+.workspace-avatar-badge {
+  position: absolute;
+  bottom: -2px;
+  right: -2px;
+  z-index: 2;
+}
+
+.workspace-avatar-badge--attention {
+  font-size: 8px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 2px;
+  border-radius: 7px;
 }
 
 .session-item-wrapper {

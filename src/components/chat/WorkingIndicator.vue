@@ -9,12 +9,11 @@
 </template>
 
 <script setup>
-import { computed } from "vue";
+import { computed, inject } from "vue";
 import { useI18n } from "vue-i18n";
-import { useZeroStore } from "@/stores/zero-store";
 
 const { t: $t } = useI18n();
-const zeroStore = useZeroStore();
+const zeroStore = inject("zeroStore");
 
 const status = computed(() => zeroStore.workingStatus);
 

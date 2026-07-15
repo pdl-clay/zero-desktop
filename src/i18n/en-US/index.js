@@ -20,6 +20,9 @@ export default {
     renameSession: "Rename session",
     removeWorkspaceTooltip: "Remove {name}",
     addWorkspaceTitle: "Select project directory",
+    sessionCapReached: "Session limit of {max} reached. Close one before opening another.",
+    sameWorkspaceWarning:
+      "A session is already active in this workspace. Concurrent edits to the same files may cause conflicts.",
   },
   theme: {
     lightMode: "Light mode",

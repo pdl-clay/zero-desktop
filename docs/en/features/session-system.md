@@ -138,25 +138,30 @@ After every successful handshake (`session/new`, `session/load`, or fallback), t
 
 ## Frontend
 
-### `zero-store.js` — Session State
+### Store split (multi-session)
 
-| State              | Type                   | Description                                                                                                                    |
-| ------------------ | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `currentSessionId` | `string \| null`       | ID of the currently viewed session.                                                                                            |
-| `sessions`         | `Array`                | Session list for the active workspace.                                                                                         |
-| `messages`         | `Array<typed message>` | Full message list displayed in `ChatView`. Includes text, thinking, tool_call, permission_request, permission_decision, error. |
-| `currentWorkspace` | `string`               | Active workspace path.                                                                                                         |
-| `isLoadingSession` | `boolean`              | True while `openSession` is fetching history.                                                                                  |
+The session state is split across three stores (see [ADR 004](../architecture/decisions/004-multi-session-parallel.md)):
 
-### Actions
+| Store                      | Type                               | Key state                                                                                                                           |
+| -------------------------- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `zero-store.js`            | Global singleton                   | `zeroPath`, `availableModels`, `activeModel`, `mcpBackends`, `permissionMode`                                                       |
+| `zero-session-store.js`    | Factory `useZeroSessionStore(key)` | `sessionKey`, `sessionId`, `cwd`, `messages[]`, `currentResponse`, `currentThinking`, `currentPlan`, `runInProgress`, `isConnected` |
+| `session-runtime-store.js` | Global singleton                   | `openKeys[]` (max 4), `focusedKey`, `keyMeta{}` (badges, cwd, title per key)                                                        |
+| `workspaces-store.js`      | Global singleton                   | `workspaces[]`, `activePath`, `sessionsByPath{}`                                                                                    |
 
-| Action                            | Description                                                                                                                                                                               |
-| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `loadSessions(cwd)`               | Calls `listZeroSessions(cwd)` and stores in `this.sessions`. Silently catches errors.                                                                                                     |
-| `openSession(sessionId)`          | Calls `loadSessionHistory(sessionId)`, runs `buildMessagesFromHistory` to populate `this.messages` with typed message objects. Sets `this.currentSessionId` and starts the 3s sync timer. |
-| `removeSession(sessionId)`        | Calls `deleteSession(sessionId)`. If the deleted session was active, stops it first so the bridge stops writing to its directory. Resets state and refreshes the session list.            |
-| `renameSession(sessionId, title)` | Calls `renameSession(sessionId, title)` then refreshes the session list.                                                                                                                  |
-| `startSession(cwd, sessionId?)`   | Reconnects the bridge with optional session resume. Clears `messages`, sets `currentWorkspace` and `currentSessionId`.                                                                    |
+### Actions (session store)
+
+| Action                                       | Description                                                                                                                                                |
+| -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `startSession(cwd, sessionId?)`              | Calls `startZeroSession(key, cwd, sessionId)`, sets `this.sessionId` from the returned `StartedSession`, starts the 3s sync timer, syncs runtime metadata. |
+| `openSession(sessionId)`                     | Calls `loadSessionHistory(sessionId)`, runs `buildMessagesFromHistory` to populate `this.messages`. Starts the 3s sync timer.                              |
+| `sendMessage(content, file?)`                | Calls `sendZeroMessage(key, content, file)`, sets `runInProgress`, syncs runtime metadata.                                                                 |
+| `cancelRun()`                                | Calls `cancelZeroRun(key)`.                                                                                                                                |
+| `switchModel(model)`                         | Calls `switchZeroModel(key, model)` — restarts only this session (decision #6). Updates `globalStore.activeModel`.                                         |
+| `stopSession()`                              | Calls `stopZeroSession(key)`, removes listeners, stops sync timer.                                                                                         |
+| `respondToPermission(requestId, optionId)`   | Calls `respondToPermission` API, updates the permission message status.                                                                                    |
+| `removeSession(sessionId, onRefresh)`        | Calls `deleteSession(sessionId)`, stops if active, calls `onRefresh`.                                                                                      |
+| `renameSession(sessionId, title, onRefresh)` | Calls `renameSession(sessionId, title)`, calls `onRefresh`.                                                                                                |
 
 ### History replay (`buildMessagesFromHistory`)
 
@@ -189,46 +194,49 @@ The timer stops when the session is changed or closed.
 
 ### MainLayout.vue — Right Panel
 
-```
-┌────────────────────────────┐
-│  my-project                 │
-│  ──────────────────────    │
-│  Sessions (3)               │
-│                            │
-│  💬 oi                    │  ← title from first message
-│     deepseek-v4  09/07     │
-│                            │
-│  💬 corrigir bug           │
-│     deepseek-v4  08/07     │  ← model + date
-│                            │
-│  ⚡ add feature (fork)     │  ← fork icon differs
-│     deepseek-v4  08/07     │
-│                            │
-└────────────────────────────┘
-```
+The session list iterates `workspacesStore.sessionsByPath[activePath]` (not a
+singleton store). Each item shows a live badge when the session is processing
+(spinner for working, `!` badge for pending permission), derived from
+`sessionRuntime.keyMeta`.
 
-- **Session item:** `q-item` with `clickable` and `v-ripple`. Active session highlighted with `bg-primary-1`.
-- **Icon:** `chat_bubble_outline` (default), `call_split` (fork), `subdirectory_arrow_right` (child).
-- **Title:** Uses `session.title` (from zero-desktop's overlay) or falls back to the last 8 characters of `session.session_id`.
-- **Subtitle:** `model_id` + formatted date (`DD/MM/YY HH:MM`).
+### Session Tile Grid
+
+`SessionTileGrid.vue` replaces the single `<ChatView>` in the main content area.
+It renders 1 (full), 2 (horizontal split), 3 (nested), or 4 (2×2 grid) panels
+based on `sessionRuntime.openKeys.length`, using Quasar's `QSplitter` for
+resizable dividers.
+
+Each panel has a `SessionPaneHeader.vue` with two distinct actions:
+
+- **Close** — `runtime.closePanel(key)` (hides only, session keeps running)
+- **Stop** — `runtime.stopAndDispose(key)` (kills the process, asks for no confirmation)
 
 ### Session Click Flow
 
 ```
 User clicks session item
   → onSelectSession(session)
-    → zeroStore.startSession(cwd, session.session_id)
-        → Bridge: starts zero acp with session/load
-    → zeroStore.openSession(session.session_id)
-        → loadSessionHistory(session_id)
-        → buildMessagesFromHistory builds typed messages
-        → ChatView re-renders with full conversation
-    → zeroStore.loadSessions(cwd)
-        → refresh session list
+    → openOrFocusSession(session.session_id, cwd, session.session_id)
+      → runtime.openPanel(key)        — adds to openKeys, sets focusedKey
+      → store.startSession(cwd, id)   — Bridge: starts zero acp with session/load
+                                        (or reattaches if already live)
+```
+
+### New Session Flow
+
+```
+User clicks "New session"
+  → onNewSession()
+    → key = crypto.randomUUID()
+    → openOrFocusSession(key, cwd, null)
+      → runtime.openPanel(key)
+      → store.startSession(cwd, null)  — Bridge: starts zero acp with session/new
+    → if same cwd already has a working session, shows non-blocking warning
 ```
 
 ## References
 
 - [Connection Architecture](../architecture/connection.md)
+- [ADR 004: Multi-Session Parallel Chat](../architecture/decisions/004-multi-session-parallel.md)
 - [Workspace System](./workspace-system.md)
 - [zero-bridge](./zero-bridge.md)

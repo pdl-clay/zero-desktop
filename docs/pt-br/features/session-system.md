@@ -138,25 +138,30 @@ Após todo handshake bem-sucedido (`session/new`, `session/load`, ou fallback), 
 
 ## Frontend
 
-### `zero-store.js` — Estado das Sessões
+### Divisão de stores (multi-sessão)
 
-| Estado             | Tipo                     | Descrição                                                                                                                            |
-| ------------------ | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `currentSessionId` | `string \| null`         | ID da sessão atualmente visualizada.                                                                                                 |
-| `sessions`         | `Array`                  | Lista de sessões do workspace ativo.                                                                                                 |
-| `messages`         | `Array<mensagem tipada>` | Lista completa de mensagens exibida no `ChatView`. Inclui text, thinking, tool_call, permission_request, permission_decision, error. |
-| `currentWorkspace` | `string`                 | Caminho do workspace ativo.                                                                                                          |
-| `isLoadingSession` | `boolean`                | True enquanto `openSession` busca histórico.                                                                                         |
+O estado das sessões está dividido em três stores (ver [ADR 004](../architecture/decisions/004-multi-session-parallel.md)):
 
-### Ações
+| Store                      | Tipo                               | Estado principal                                                                                                                    |
+| -------------------------- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `zero-store.js`            | Singleton global                   | `zeroPath`, `availableModels`, `activeModel`, `mcpBackends`, `permissionMode`                                                       |
+| `zero-session-store.js`    | Fábrica `useZeroSessionStore(key)` | `sessionKey`, `sessionId`, `cwd`, `messages[]`, `currentResponse`, `currentThinking`, `currentPlan`, `runInProgress`, `isConnected` |
+| `session-runtime-store.js` | Singleton global                   | `openKeys[]` (máx 4), `focusedKey`, `keyMeta{}` (badges, cwd, título por chave)                                                     |
+| `workspaces-store.js`      | Singleton global                   | `workspaces[]`, `activePath`, `sessionsByPath{}`                                                                                    |
 
-| Ação                              | Descrição                                                                                                                                                                                              |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `loadSessions(cwd)`               | Chama `listZeroSessions(cwd)` e armazena em `this.sessions`. Erros são silenciosamente ignorados.                                                                                                      |
-| `openSession(sessionId)`          | Chama `loadSessionHistory(sessionId)`, executa `buildMessagesFromHistory` para popular `this.messages` com objetos de mensagem tipados. Define `this.currentSessionId` e inicia o timer de sync de 3s. |
-| `removeSession(sessionId)`        | Chama `deleteSession(sessionId)`. Se a sessão excluída estava ativa, para ela primeiro. Reseta estado e atualiza a lista de sessões.                                                                   |
-| `renameSession(sessionId, title)` | Chama `renameSession(sessionId, title)` e então atualiza a lista de sessões.                                                                                                                           |
-| `startSession(cwd, sessionId?)`   | Reconecta o bridge com opção de resume da sessão. Limpa `messages`, define `currentWorkspace` e `currentSessionId`.                                                                                    |
+### Ações (session store)
+
+| Ação                                         | Descrição                                                                                                                                                           |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `startSession(cwd, sessionId?)`              | Chama `startZeroSession(key, cwd, sessionId)`, define `this.sessionId` do `StartedSession` retornado, inicia o timer de sync de 3s, sincroniza metadata do runtime. |
+| `openSession(sessionId)`                     | Chama `loadSessionHistory(sessionId)`, executa `buildMessagesFromHistory` para popular `this.messages`. Inicia o timer de sync de 3s.                               |
+| `sendMessage(content, file?)`                | Chama `sendZeroMessage(key, content, file)`, define `runInProgress`, sincroniza metadata do runtime.                                                                |
+| `cancelRun()`                                | Chama `cancelZeroRun(key)`.                                                                                                                                         |
+| `switchModel(model)`                         | Chama `switchZeroModel(key, model)` — reinicia apenas esta sessão (decisão #6). Atualiza `globalStore.activeModel`.                                                 |
+| `stopSession()`                              | Chama `stopZeroSession(key)`, remove listeners, para o timer de sync.                                                                                               |
+| `respondToPermission(requestId, optionId)`   | Chama a API `respondToPermission`, atualiza o status da mensagem de permissão.                                                                                      |
+| `removeSession(sessionId, onRefresh)`        | Chama `deleteSession(sessionId)`, para se ativa, chama `onRefresh`.                                                                                                 |
+| `renameSession(sessionId, title, onRefresh)` | Chama `renameSession(sessionId, title)`, chama `onRefresh`.                                                                                                         |
 
 ### Reprodução de histórico (`buildMessagesFromHistory`)
 
@@ -189,46 +194,49 @@ O timer para quando a sessão é trocada ou fechada.
 
 ### MainLayout.vue — Painel Direito
 
-```
-┌────────────────────────────┐
-│  meu-projeto                │
-│  ──────────────────────    │
-│  Sessões (3)               │
-│                            │
-│  💬 oi                    │  ← título da primeira mensagem
-│     deepseek-v4  09/07     │
-│                            │
-│  💬 corrigir bug           │
-│     deepseek-v4  08/07     │  ← modelo + data
-│                            │
-│  ⚡ add feature (fork)     │  ← ícone difere para fork
-│     deepseek-v4  08/07     │
-│                            │
-└────────────────────────────┘
-```
+A lista de sessões itera `workspacesStore.sessionsByPath[activePath]` (não uma
+store singleton). Cada item mostra um badge ao vivo quando a sessão está
+processando (spinner para trabalhando, badge `!` para permissão pendente),
+derivado de `sessionRuntime.keyMeta`.
 
-- **Item de sessão:** `q-item` com `clickable` e `v-ripple`. Sessão ativa destacada com `bg-primary-1`.
-- **Ícone:** `chat_bubble_outline` (padrão), `call_split` (fork), `subdirectory_arrow_right` (child).
-- **Título:** Usa `session.title` (do overlay do zero-desktop) ou fallback para os últimos 8 caracteres de `session.session_id`.
-- **Subtítulo:** `model_id` + data formatada (`DD/MM/AA HH:MM`).
+### Grid de Painéis (Tiling)
+
+`SessionTileGrid.vue` substitui o `<ChatView>` único na área de conteúdo
+principal. Renderiza 1 (tela cheia), 2 (divisão horizontal), 3 (aninhado), ou 4
+(grade 2×2) painéis baseado em `sessionRuntime.openKeys.length`, usando
+`QSplitter` do Quasar para divisórias redimensionáveis.
+
+Cada painel tem um `SessionPaneHeader.vue` com duas ações distintas:
+
+- **Fechar** — `runtime.closePanel(key)` (esconde apenas, sessão continua rodando)
+- **Parar** — `runtime.stopAndDispose(key)` (mata o processo)
 
 ### Fluxo ao Clicar na Sessão
 
 ```
 Usuário clica no item da sessão
   → onSelectSession(session)
-    → zeroStore.startSession(cwd, session.session_id)
-        → Bridge: inicia zero acp com session/load
-    → zeroStore.openSession(session.session_id)
-        → loadSessionHistory(session_id)
-        → buildMessagesFromHistory constrói mensagens tipadas
-        → ChatView renderiza a conversa completa
-    → zeroStore.loadSessions(cwd)
-        → atualiza lista de sessões
+    → openOrFocusSession(session.session_id, cwd, session.session_id)
+      → runtime.openPanel(key)        — adiciona a openKeys, define focusedKey
+      → store.startSession(cwd, id)   — Bridge: inicia zero acp com session/load
+                                        (ou reconecta se já estiver viva)
+```
+
+### Fluxo de Nova Sessão
+
+```
+Usuário clica em "Nova sessão"
+  → onNewSession()
+    → key = crypto.randomUUID()
+    → openOrFocusSession(key, cwd, null)
+      → runtime.openPanel(key)
+      → store.startSession(cwd, null)  — Bridge: inicia zero acp com session/new
+    → se mesmo cwd já tem sessão trabalhando, mostra aviso não-bloqueante
 ```
 
 ## Referências
 
 - [Arquitetura de Conexão](../architecture/connection.md)
+- [ADR 004: Sessões Paralelas](../architecture/decisions/004-multi-session-parallel.md)
 - [Sistema de Workspaces](./workspace-system.md)
 - [zero-bridge](./zero-bridge.md)

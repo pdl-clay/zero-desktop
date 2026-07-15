@@ -4,7 +4,7 @@
     @update:model-value="onUpdate"
     :width="isDesktop && !expanded ? 0 : 320"
     :breakpoint="1024"
-    show-if-above
+    :show-if-above="isDesktop"
     side="right"
     bordered
     no-swipe-close
@@ -210,12 +210,23 @@
 import { ref, computed, watch } from "vue";
 import { useQuasar } from "quasar";
 import { useZeroStore } from "@/stores/zero-store";
+import { useSessionRuntimeStore } from "@/stores/session-runtime-store";
+import { useZeroSessionStore } from "@/stores/zero-session-store";
 import { storeToRefs } from "pinia";
 import { getEditStrings } from "@/utils/edit-tools";
 
 const $q = useQuasar();
 const zeroStore = useZeroStore();
-const { mcpBackends: backends, isLoadingMcp: isLoading, editedFiles } = storeToRefs(zeroStore);
+const sessionRuntime = useSessionRuntimeStore();
+const { mcpBackends: backends, isLoadingMcp: isLoading } = storeToRefs(zeroStore);
+
+const focusedSessionStore = computed(() => {
+  const key = sessionRuntime.focusedKey;
+  if (!key) return null;
+  return useZeroSessionStore(key);
+});
+
+const editedFiles = computed(() => focusedSessionStore.value?.editedFiles ?? []);
 
 const props = defineProps({
   modelValue: {
@@ -264,7 +275,7 @@ function editPreviewFor(message) {
 // both the old and new session (editedFiles itself already updates on its
 // own via the store getter, no watcher needed for that part).
 watch(
-  () => zeroStore.currentSessionId,
+  () => sessionRuntime.focusedKey,
   () => {
     expandedFilePath.value = null;
   },

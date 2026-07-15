@@ -13,6 +13,11 @@ use crate::acp::{parse_line, AcpMessage, AcpPeer};
 use crate::locator::locate_zero;
 use crate::{AttachmentKind, FileAttachment};
 
+/// Maximum number of `zero acp` child processes that may be live at the same
+/// time. This intentionally equals the maximum number of open panels in the
+/// frontend (decision #5): there is no read-only panel beyond this limit.
+pub const MAX_CONCURRENT_SESSIONS: usize = 4;
+
 /// Events emitted to the frontend on `zero:event`. Kept in the same shape
 /// zero's old stream-json protocol used ({schemaVersion, type, ...payload})
 /// so the frontend (zero-store.js) barely needs to change across the
@@ -36,6 +41,39 @@ impl OutputEvent {
             payload,
         }
     }
+
+    /// Tag the payload with the session key so the frontend can route global
+    /// events to the correct panel/store. Called right before emission.
+    fn with_session_key(self, session_key: &str) -> Self {
+        let mut payload = self.payload;
+        payload["sessionKey"] = serde_json::Value::String(session_key.to_string());
+        Self {
+            schema_version: self.schema_version,
+            event_type: self.event_type,
+            payload,
+        }
+    }
+}
+
+/// Result returned by `ZeroBridge::start` so the frontend learns the real
+/// `session_id` assigned by the CLI and whether a new process was spawned or
+/// an existing live session was reattached.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StartedSession {
+    pub key: String,
+    #[serde(rename = "sessionId")]
+    pub session_id: String,
+    pub reattached: bool,
+}
+
+/// Snapshot of one live session, returned by `list_live_sessions`.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct LiveSessionInfo {
+    pub key: String,
+    #[serde(rename = "sessionId")]
+    pub session_id: String,
+    pub cwd: PathBuf,
+    pub live: bool,
 }
 
 /// ACP's tool_call/tool_call_update identify calls with a `toolCallId` like
@@ -290,6 +328,8 @@ fn title_map_path() -> Result<PathBuf, String> {
     Ok(base.join("zero-desktop").join("session-titles.json"))
 }
 
+static TITLE_FILE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn load_title_map() -> HashMap<String, String> {
     let Ok(path) = title_map_path() else {
         return HashMap::new();
@@ -316,12 +356,14 @@ pub fn get_session_title(session_id: &str) -> Option<String> {
 /// Set (or overwrite) a session's title - used both for the auto-derived
 /// title on a session's first message and for an explicit user rename.
 pub fn set_session_title(session_id: &str, title: &str) -> Result<(), String> {
+    let _lock = TITLE_FILE_LOCK.lock().map_err(|e| e.to_string())?;
     let mut map = load_title_map();
     map.insert(session_id.to_string(), title.to_string());
     save_title_map(&map)
 }
 
 pub fn remove_session_title(session_id: &str) -> Result<(), String> {
+    let _lock = TITLE_FILE_LOCK.lock().map_err(|e| e.to_string())?;
     let mut map = load_title_map();
     if map.remove(session_id).is_some() {
         save_title_map(&map)?;
@@ -340,6 +382,8 @@ fn model_map_path() -> Result<PathBuf, String> {
     let base = dirs::data_dir().ok_or_else(|| "Could not resolve app data directory".to_string())?;
     Ok(base.join("zero-desktop").join("session-models.json"))
 }
+
+static MODEL_FILE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn load_model_map() -> HashMap<String, String> {
     let Ok(path) = model_map_path() else {
@@ -365,12 +409,14 @@ pub fn get_session_model(session_id: &str) -> Option<String> {
 }
 
 pub fn set_session_model(session_id: &str, model_id: &str) -> Result<(), String> {
+    let _lock = MODEL_FILE_LOCK.lock().map_err(|e| e.to_string())?;
     let mut map = load_model_map();
     map.insert(session_id.to_string(), model_id.to_string());
     save_model_map(&map)
 }
 
 pub fn remove_session_model(session_id: &str) -> Result<(), String> {
+    let _lock = MODEL_FILE_LOCK.lock().map_err(|e| e.to_string())?;
     let mut map = load_model_map();
     if map.remove(session_id).is_some() {
         save_model_map(&map)?;
@@ -524,6 +570,7 @@ fn derive_title_from_message(content: &str) -> String {
 struct PendingPermission {
     reply_id: serde_json::Value,
     payload: serde_json::Value,
+    session_key: String,
 }
 
 /// A live `zero acp` child process plus the peer used to talk to it.
@@ -532,10 +579,9 @@ struct LiveProcess {
     peer: AcpPeer,
 }
 
-/// State for the app's one active zero session. `live` is `None` when the
-/// process has been killed (cancelled, or crashed) but the session is still
-/// logically "current" - the next `send()` respawns it and reattaches via
-/// `session/load`.
+/// State for one active zero session. `live` is `None` when the process has
+/// been killed (cancelled, or crashed) but the session is still logically
+/// tracked - the next `send()` respawns it and reattaches via `session/load`.
 struct AcpSession {
     cwd: PathBuf,
     session_id: String,
@@ -544,7 +590,7 @@ struct AcpSession {
 }
 
 /// Bridge that manages a `zero acp` child process per active session and
-/// forwards translated events to the frontend.
+/// forwards translated events to the frontend keyed by session.
 ///
 /// One process per session (not shared across sessions/workspaces): `zero`
 /// has no `session/cancel` method (verified live - "method not found"), so
@@ -553,7 +599,7 @@ struct AcpSession {
 /// so each session gets its own.
 pub struct ZeroBridge {
     app: tauri::AppHandle,
-    session: Arc<Mutex<Option<AcpSession>>>,
+    sessions: Arc<Mutex<HashMap<String, AcpSession>>>,
     pending_permissions: Arc<Mutex<HashMap<String, PendingPermission>>>,
 }
 
@@ -561,16 +607,23 @@ impl ZeroBridge {
     pub fn new(app: tauri::AppHandle) -> Self {
         Self {
             app,
-            session: Arc::new(Mutex::new(None)),
+            sessions: Arc::new(Mutex::new(HashMap::new())),
             pending_permissions: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    /// How many sessions currently have a live process. The limit is enforced
+    /// against this, not the total number of tracked sessions, so a cancelled
+    /// session doesn't occupy a slot until it is respawned.
+    fn live_count_sync(sessions: &HashMap<String, AcpSession>) -> usize {
+        sessions.values().filter(|s| s.live.is_some()).count()
     }
 
     /// Spawn `zero acp`, complete the `initialize` handshake, and open a
     /// session (`session/load` when `resume_id` is given, falling back to
     /// `session/new` if that fails; plain `session/new` otherwise). Spawns
     /// the stdout reader loop and the stderr forwarder. Does not touch
-    /// `self.session` - callers install the result.
+    /// `self.sessions` - callers install the result.
     ///
     /// `known_history_path` is `Some` when the caller already knows which
     /// session this will be (resuming, or respawning after a cancel) and
@@ -583,8 +636,12 @@ impl ZeroBridge {
     /// silently written to a shared placeholder file instead of
     /// `<real-session-id>.jsonl`, which is why history replay is the thing
     /// to check first if this regresses again.
+    ///
+    /// `session_key` is the frontend-owned routing key; all emitted events
+    /// carry it so listeners can filter by panel.
     async fn spawn_and_handshake(
         &self,
+        session_key: &str,
         cwd: &Path,
         resume_id: Option<&str>,
         known_history_path: Option<PathBuf>,
@@ -598,6 +655,7 @@ impl ZeroBridge {
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true)
             .spawn()
             .map_err(|e| format!("Failed to spawn zero acp: {e}"))?;
 
@@ -617,15 +675,20 @@ impl ZeroBridge {
         let peer = AcpPeer::new(stdin);
 
         let app_stderr = self.app.clone();
+        let stderr_key = session_key.to_string();
         tokio::spawn(async move {
             let mut lines = BufReader::new(stderr).lines();
             while let Ok(Some(line)) = lines.next_line().await {
-                let _ = app_stderr.emit("zero:stderr", line);
+                let payload = serde_json::json!({
+                    "sessionKey": stderr_key.clone(),
+                    "line": line,
+                });
+                let _ = app_stderr.emit("zero:stderr", payload);
             }
         });
 
         let history_cell: Arc<Mutex<Option<PathBuf>>> = Arc::new(Mutex::new(known_history_path));
-        self.spawn_stdout_reader(peer.clone(), stdout, history_cell.clone());
+        self.spawn_stdout_reader(session_key.to_string(), peer.clone(), stdout, history_cell.clone());
 
         peer.request(
             "initialize",
@@ -702,6 +765,7 @@ impl ZeroBridge {
     /// untouched; only what lands in the on-disk history changes.
     fn spawn_stdout_reader(
         &self,
+        session_key: String,
         peer: AcpPeer,
         stdout: ChildStdout,
         history_path: Arc<Mutex<Option<PathBuf>>>,
@@ -717,7 +781,11 @@ impl ZeroBridge {
             while let Ok(Some(line)) = lines.next_line().await {
                 let Some(msg) = parse_line(&line) else {
                     log::error!("[bridge] failed to parse acp line: {line}");
-                    let _ = app.emit("zero:stderr", format!("[unparsed] {line}"));
+                    let payload = serde_json::json!({
+                        "sessionKey": session_key.clone(),
+                        "line": format!("[unparsed] {line}"),
+                    });
+                    let _ = app.emit("zero:stderr", payload);
                     continue;
                 };
 
@@ -781,7 +849,7 @@ impl ZeroBridge {
                         }
 
                         if let Some(event) = event {
-                            let _ = app.emit("zero:event", event);
+                            let _ = app.emit("zero:event", event.with_session_key(&session_key));
                         }
                     }
                     AcpMessage::Request { id, method, params } => {
@@ -795,11 +863,15 @@ impl ZeroBridge {
                                 .map(|d| d.as_nanos())
                                 .unwrap_or_default()
                         );
-                        log::info!("[bridge] permission request received: correlation_id={correlation_id} reply_id={id}");
+                        log::info!("[bridge] permission request received: correlation_id={correlation_id} reply_id={id} session_key={session_key}");
                         let payload = translate_permission_request(&correlation_id, &params);
                         pending_permissions.lock().await.insert(
                             correlation_id.clone(),
-                            PendingPermission { reply_id: id.clone(), payload: payload.clone() },
+                            PendingPermission {
+                                reply_id: id.clone(),
+                                payload: payload.clone(),
+                                session_key: session_key.clone(),
+                            },
                         );
                         if let Some(path) = history_path.lock().await.clone() {
                             flush_pending_reasoning(&path, &mut pending_thinking).await;
@@ -807,11 +879,17 @@ impl ZeroBridge {
                         } else {
                             pending_thinking.clear();
                         }
-                        let _ = app.emit("zero:permission-request", payload);
+                        let payload_with_key = {
+                            let mut v = payload;
+                            v["sessionKey"] = serde_json::Value::String(session_key.clone());
+                            v
+                        };
+                        let _ = app.emit("zero:permission-request", payload_with_key);
                     }
                 }
             }
-            let _ = app.emit("zero:process-exited", ());
+            let payload = serde_json::json!({ "sessionKey": session_key });
+            let _ = app.emit("zero:process-exited", payload);
         });
     }
 
@@ -820,13 +898,24 @@ impl ZeroBridge {
         let _ = live.child.wait().await;
     }
 
-    pub async fn start(&self, cwd: PathBuf, resume_id: Option<String>) -> Result<(), String> {
+    pub async fn start(&self, key: String, cwd: PathBuf, resume_id: Option<String>) -> Result<StartedSession, String> {
         {
-            let mut session = self.session.lock().await;
-            if let Some(mut old) = session.take() {
-                if let Some(mut live) = old.live.take() {
-                    Self::kill_live(&mut live).await;
+            let sessions = self.sessions.lock().await;
+            if let Some(existing) = sessions.get(&key) {
+                if existing.live.is_some() {
+                    // Already running under this key - reconnect without spawning a second process.
+                    return Ok(StartedSession {
+                        key,
+                        session_id: existing.session_id.clone(),
+                        reattached: true,
+                    });
                 }
+            }
+            if Self::live_count_sync(&sessions) >= MAX_CONCURRENT_SESSIONS {
+                return Err(format!(
+                    "SESSION_CAP_REACHED: {} sessions are already running. Stop one before starting another.",
+                    MAX_CONCURRENT_SESSIONS
+                ));
             }
         }
 
@@ -835,31 +924,48 @@ impl ZeroBridge {
             None => None,
         };
         let (child, peer, session_id) = self
-            .spawn_and_handshake(&cwd, resume_id.as_deref(), known_history_path)
+            .spawn_and_handshake(&key, &cwd, resume_id.as_deref(), known_history_path)
             .await?;
         let history_path = history_path_for(&session_id)?;
 
-        let mut session = self.session.lock().await;
-        *session = Some(AcpSession {
-            cwd,
-            session_id,
-            history_path,
-            live: Some(LiveProcess { child, peer }),
-        });
+        let mut sessions = self.sessions.lock().await;
+        if Self::live_count_sync(&sessions) >= MAX_CONCURRENT_SESSIONS {
+            // Another call filled the last slot while we were handshaking. Kill the
+            // freshly spawned process rather than exceeding the cap.
+            let mut just_spawned = LiveProcess { child, peer };
+            Self::kill_live(&mut just_spawned).await;
+            return Err(format!(
+                "SESSION_CAP_REACHED: {} sessions are already running. Stop one before starting another.",
+                MAX_CONCURRENT_SESSIONS
+            ));
+        }
+        sessions.insert(
+            key.clone(),
+            AcpSession {
+                cwd,
+                session_id: session_id.clone(),
+                history_path,
+                live: Some(LiveProcess { child, peer }),
+            },
+        );
 
-        Ok(())
+        Ok(StartedSession {
+            key,
+            session_id,
+            reattached: false,
+        })
     }
 
-    /// Ensure the current session has a live process, respawning (and
-    /// `session/load`-ing) if it was killed by `cancel()` or died on its
+    /// Ensure the session identified by `key` has a live process, respawning
+    /// (and `session/load`-ing) if it was killed by `cancel()` or died on its
     /// own. Returns the peer, session id, and history path to use for the
     /// next request.
-    async fn ensure_live(&self) -> Result<(AcpPeer, String, PathBuf), String> {
+    async fn ensure_live(&self, key: &str) -> Result<(AcpPeer, String, PathBuf), String> {
         let (cwd, session_id, history_path, needs_respawn) = {
-            let session = self.session.lock().await;
-            let s = session
-                .as_ref()
-                .ok_or_else(|| "No active zero session".to_string())?;
+            let sessions = self.sessions.lock().await;
+            let s = sessions
+                .get(key)
+                .ok_or_else(|| "No active zero session for this key".to_string())?;
             (
                 s.cwd.clone(),
                 s.session_id.clone(),
@@ -870,19 +976,19 @@ impl ZeroBridge {
 
         if needs_respawn {
             let (child, peer, resumed_id) = self
-                .spawn_and_handshake(&cwd, Some(&session_id), Some(history_path))
+                .spawn_and_handshake(key, &cwd, Some(&session_id), Some(history_path))
                 .await?;
-            let mut session = self.session.lock().await;
-            if let Some(ref mut s) = *session {
+            let mut sessions = self.sessions.lock().await;
+            if let Some(s) = sessions.get_mut(key) {
                 s.session_id = resumed_id;
                 s.live = Some(LiveProcess { child, peer });
             }
         }
 
-        let session = self.session.lock().await;
-        let s = session
-            .as_ref()
-            .ok_or_else(|| "No active zero session".to_string())?;
+        let sessions = self.sessions.lock().await;
+        let s = sessions
+            .get(key)
+            .ok_or_else(|| "No active zero session for this key".to_string())?;
         let live = s
             .live
             .as_ref()
@@ -895,8 +1001,8 @@ impl ZeroBridge {
     /// turn ends) and returns immediately - progress is tracked via
     /// `zero:event`/`zero:permission-request`, same as the app already
     /// expects.
-    pub async fn send(&self, content: String, file: Option<FileAttachment>) -> Result<(), String> {
-        let (peer, session_id, history_path) = self.ensure_live().await?;
+    pub async fn send(&self, key: String, content: String, file: Option<FileAttachment>) -> Result<(), String> {
+        let (peer, session_id, history_path) = self.ensure_live(&key).await?;
 
         // First message of a session (no title recorded yet) gives it a
         // real name instead of zero's generic "ACP session" default - there
@@ -930,6 +1036,7 @@ impl ZeroBridge {
         append_history(&history_path, "message", &message_payload).await;
 
         let app = self.app.clone();
+        let key_for_event = key.clone();
         tokio::spawn(async move {
             let result = peer
                 .request(
@@ -951,7 +1058,7 @@ impl ZeroBridge {
                 ),
                 Err(e) => OutputEvent::new("error", serde_json::json!({ "message": e })),
             };
-            let _ = app.emit("zero:event", event);
+            let _ = app.emit("zero:event", event.with_session_key(&key_for_event));
         });
 
         Ok(())
@@ -959,7 +1066,7 @@ impl ZeroBridge {
 
     /// Answer a pending `session/request_permission` request from the
     /// agent. This is the actual payoff of the ACP migration: unlike the old
-    /// `zero exec` transport, this reply really reaches the agent.
+    /// exec transport, this reply really reaches the agent.
     pub async fn respond_to_permission(&self, request_id: String, option_id: String) -> Result<(), String> {
         log::info!("[bridge] respond_to_permission called: request_id={request_id} option_id={option_id}");
         let pending = self
@@ -977,7 +1084,12 @@ impl ZeroBridge {
         // distinguish "the user answered in time" from "the session ended
         // with no answer", and rendered both as an expired permission once
         // the periodic history resync overwrote the live in-memory state.
-        let history_path = self.session.lock().await.as_ref().map(|s| s.history_path.clone());
+        let history_path = {
+            let sessions = self.sessions.lock().await;
+            sessions
+                .get(&pending.session_key)
+                .map(|s| s.history_path.clone())
+        };
         if let Some(history_path) = history_path {
             let decision = serde_json::json!({
                 "requestId": request_id,
@@ -989,7 +1101,7 @@ impl ZeroBridge {
         }
 
         log::info!("[bridge] sending permission reply: reply_id={} option_id={option_id}", pending.reply_id);
-        let (peer, _, _) = self.ensure_live().await?;
+        let (peer, _, _) = self.ensure_live(&pending.session_key).await?;
         peer.respond(
             pending.reply_id,
             serde_json::json!({ "outcome": { "outcome": "selected", "optionId": option_id } }),
@@ -997,12 +1109,13 @@ impl ZeroBridge {
         .await
     }
 
-    /// Cancel the in-flight turn. `zero` has no `session/cancel` method, so
-    /// this kills the process outright; the session record (cwd/session_id)
-    /// is kept so the next `send()` respawns and `session/load`s back in.
-    pub async fn cancel(&self) -> Result<(), String> {
-        let mut session = self.session.lock().await;
-        if let Some(ref mut s) = *session {
+    /// Cancel the in-flight turn for the session identified by `key`. `zero`
+    /// has no `session/cancel` method, so this kills the process outright;
+    /// the session record (cwd/session_id) is kept so the next `send()`
+    /// respawns and `session/load`s back in.
+    pub async fn cancel(&self, key: String) -> Result<(), String> {
+        let mut sessions = self.sessions.lock().await;
+        if let Some(s) = sessions.get_mut(&key) {
             if let Some(mut live) = s.live.take() {
                 Self::kill_live(&mut live).await;
             }
@@ -1010,14 +1123,40 @@ impl ZeroBridge {
         Ok(())
     }
 
-    pub async fn stop(&self) -> Result<(), String> {
-        let mut session = self.session.lock().await;
-        if let Some(mut s) = session.take() {
+    pub async fn stop(&self, key: String) -> Result<(), String> {
+        let mut sessions = self.sessions.lock().await;
+        if let Some(mut s) = sessions.remove(&key) {
             if let Some(mut live) = s.live.take() {
                 Self::kill_live(&mut live).await;
             }
         }
         Ok(())
+    }
+
+    /// Kill every live process and clear the session map. Used when the app
+    /// exits so no orphan `zero acp` processes remain.
+    pub async fn kill_all(&self) {
+        let mut sessions = self.sessions.lock().await;
+        for (_, mut s) in sessions.drain() {
+            if let Some(mut live) = s.live.take() {
+                Self::kill_live(&mut live).await;
+            }
+        }
+    }
+
+    /// Return the list of tracked sessions for frontend reconciliation.
+    pub async fn list_live_sessions(&self) -> Vec<LiveSessionInfo> {
+        self.sessions
+            .lock()
+            .await
+            .iter()
+            .map(|(key, s)| LiveSessionInfo {
+                key: key.clone(),
+                session_id: s.session_id.clone(),
+                cwd: s.cwd.clone(),
+                live: s.live.is_some(),
+            })
+            .collect()
     }
 }
 
@@ -1168,6 +1307,13 @@ mod tests {
         assert_eq!(parsed.schema_version, original.schema_version);
         assert_eq!(parsed.event_type, original.event_type);
         assert_eq!(parsed.payload["delta"], original.payload["delta"]);
+    }
+
+    #[test]
+    fn test_output_event_with_session_key() {
+        let event = OutputEvent::new("text", serde_json::json!({ "delta": "hello" }))
+            .with_session_key("key-1");
+        assert_eq!(event.payload["sessionKey"], "key-1");
     }
 
     fn test_image() -> FileAttachment {

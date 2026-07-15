@@ -26,14 +26,19 @@ A conexão segue a arquitetura definida em [`docs/pt-br/architecture/connection.
 
 #### Commands de sessão (via `zero acp`)
 
-| Command                 | Descrição                                                                                                                                              |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `locate_zero_cli`       | Retorna o caminho e a versão do zero CLI.                                                                                                              |
-| `start_zero_session`    | Sobe o `zero acp` pro workspace informado e abre (ou carrega) uma sessão.                                                                              |
-| `send_zero_message`     | Manda um `session/prompt`, opcionalmente com anexo de arquivo, transmitindo progresso de volta via eventos.                                            |
-| `respond_to_permission` | Responde um `session/request_permission` pendente com a opção escolhida.                                                                               |
-| `cancel_zero_run`       | Mata o processo da sessão atual (não existe método `session/cancel`). Session id e histórico são preservados; o próximo `send()` respawna e reconecta. |
-| `stop_zero_session`     | Para a sessão ativa e limpa todo o estado.                                                                                                             |
+Todos os commands de sessão aceitam um `key: String` — a chave de roteamento do
+frontend (UUID para novas sessões, `session_id` para retomadas). Eventos carregam
+a mesma chave para o frontend rotear ao painel correto.
+
+| Command                 | Descrição                                                                                                                                      |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `locate_zero_cli`       | Retorna o caminho e a versão do zero CLI.                                                                                                      |
+| `start_zero_session`    | Sobe o `zero acp` para a chave + workspace informado e abre (ou carrega) uma sessão. Retorna `StartedSession { key, sessionId, reattached }`.  |
+| `send_zero_message`     | Manda um `session/prompt` para a sessão identificada por `key`, opcionalmente com anexo, transmitindo progresso via eventos.                   |
+| `respond_to_permission` | Responde um `session/request_permission` pendente. Roteado internamente pelo `session_key` armazenado no pedido pendente.                      |
+| `cancel_zero_run`       | Mata o processo da sessão para `key` (não existe `session/cancel`). Session id e histórico preservados; próximo `send()` respawna e reconecta. |
+| `stop_zero_session`     | Para a sessão para `key` e remove seu registro do bridge.                                                                                      |
+| `list_live_sessions`    | Retorna `Vec<LiveSessionInfo { key, sessionId, cwd, live }>` de todas as sessões rastreadas — usado pelo frontend para reconciliar estado.     |
 
 #### Commands de gerenciamento de sessão (via zero CLI)
 
@@ -55,7 +60,7 @@ A conexão segue a arquitetura definida em [`docs/pt-br/architecture/connection.
 | Command             | Descrição                                                                                                                                                                                             |
 | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `list_zero_models`  | Consulta o endpoint de listagem de modelos do provedor ativo via `zero providers models --json` e retorna a lista completa mais qual modelo está ativo. Não é instantâneo — uma chamada de rede real. |
-| `switch_zero_model` | Atualiza o modelo do provedor ativo globalmente via `zero providers add --model <x> --set-active`, depois mata o processo da sessão ao vivo para que a próxima mensagem capte a mudança.              |
+| `switch_zero_model` | Atualiza o modelo do provedor ativo globalmente via `zero providers add --model <x> --set-active`, depois mata apenas a sessão identificada por `key`. Outras sessões vivas não são afetadas.         |
 
 #### Commands MCP
 
@@ -69,12 +74,15 @@ A conexão segue a arquitetura definida em [`docs/pt-br/architecture/connection.
 
 ### Events
 
-| Evento                    | Descrição                                                                                                    |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `zero:event`              | Um evento ACP traduzido: `text`, `reasoning`, `tool_call`, `tool_result`, `plan_update`, `run_end`, `error`. |
-| `zero:permission-request` | Um pedido de permissão real do agente, aguardando resposta via `respond_to_permission`.                      |
-| `zero:stderr`             | Uma linha do stderr do processo zero (ou linha de stdout não interpretável, logada pra visibilidade).        |
-| `zero:process-exited`     | O stream de stdout do processo da sessão fechou.                                                             |
+Todos os eventos carregam `sessionKey` no payload para o frontend rotear ao
+painel/store correto. Listeners filtram por `payload.sessionKey`.
+
+| Evento                    | Payload                                                | Descrição                                                                                                    |
+| ------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| `zero:event`              | `{ schemaVersion, type, ...payload, sessionKey }`      | Um evento ACP traduzido: `text`, `reasoning`, `tool_call`, `tool_result`, `plan_update`, `run_end`, `error`. |
+| `zero:permission-request` | `{ requestId, toolName, reason, options, sessionKey }` | Um pedido de permissão real do agente, aguardando resposta via `respond_to_permission`.                      |
+| `zero:stderr`             | `{ sessionKey, line }`                                 | Uma linha do stderr do processo zero (ou linha de stdout não interpretável, logada pra visibilidade).        |
+| `zero:process-exited`     | `{ sessionKey }`                                       | O stream de stdout do processo da sessão fechou.                                                             |
 
 #### Tipos de evento dentro de `zero:event`
 
@@ -137,27 +145,34 @@ E, via o evento dedicado `zero:permission-request`, um pedido de permissão de v
 
 ### Arquitetura da store
 
-A store Pinia (`zero-store.js`) gerencia:
+As stores Pinia estão divididas em três camadas (ver [ADR 004](../architecture/decisions/004-multi-session-parallel.md)):
 
-- `messages[]` — lista tipada de mensagens (text, thinking, tool_call, permission_request, permission_decision, error).
-- `currentResponse` / `currentThinking` — buffers de streaming finalizados em mensagens permanentes na próxima fronteira de evento.
-- `currentPlan` — checklist atual do plano do agente (substituída por completo a cada `plan_update`).
-- `activePlan` getter — retorna `null` quando todos os itens estão concluídos, auto-ocultando o painel.
-- `editedFiles` getter — agrupa chamadas `edit_file`/`write_file` por caminho de arquivo, preservando ordem de encontro.
-- `workingStatus` getter — retorna `thinking`, `{ type: "tool", toolName }`, `writing`, `sending`, ou `null`.
-- `availableModels` / `activeModel` — populados por `list_zero_models` (chamada de rede ao provedor).
-- `mcpBackends` / `mcpTools` — populados por `list_mcp_backends` + `list_mcp_tools`, com overlay de status cached.
-- `permissionMode` — `"ask"` (padrão) ou `"auto_allow"` (auto-aprova pedidos de permissão).
-- `_sessionSyncTimer` — releitura periódica (3s) do histórico enquanto uma sessão está aberta, capturando mudanças externas.
+- **`zero-store.js`** (global, singleton) — `zeroPath`, `availableModels`,
+  `activeModel`, `mcpBackends`, `mcpTools`, `permissionMode`. Apenas estado app-wide.
+- **`zero-session-store.js`** (fábrica, `useZeroSessionStore(key)`) — estado por
+  sessão: `messages[]`, `currentResponse`, `currentThinking`, `currentPlan`,
+  `runInProgress`, listeners (filtrados por `sessionKey`). Getters:
+  `workingStatus`, `activePlan`, `editedFiles`.
+- **`session-runtime-store.js`** (orquestrador) — `openKeys` (ordem de exibição,
+  máx 4), `focusedKey`, `keyMeta` (metadata por chave para badges). Actions:
+  `openPanel`, `closePanel` (esconde), `stopAndDispose` (mata processo),
+  `openOrFocusSession` (entry point usado pela UI).
+
+`ChatView.vue` cria uma session store para sua prop `sessionKey` e faz
+`provide("zeroStore", store)` para os componentes filhos. `ChatInput.vue` usa a
+session store injetada (para `switchModel` — por sessão) e a global store (para
+lista de modelos, permission mode). `McpDrawer.vue` lê `editedFiles` da session
+store focada.
 
 ## Limitações conhecidas (alpha)
 
 - Não existe `session/cancel` no protocolo: cancelar um turno mata o processo daquela sessão; a próxima mensagem sobe o processo de novo e reconecta via `session/load`.
 - Acesso à rede (ex: `web_fetch`) é negado pelo sandbox do próprio zero independente da permissão respondida - um limite rígido da política de sandbox atual, não algo que esse bridge controla.
-- Sem interface com abas para múltiplos workspaces (apenas um workspace ativo por vez).
+- Sessões concorrentes editando os mesmos arquivos (mesmo workspace) podem causar corridas de escrita — um aviso não-bloqueante é mostrado, mas nenhum lock a nível de arquivo é enforceado.
 
 ## Referências
 
 - [Arquitetura: Conexão](../architecture/connection.md)
-- [ADR 003: Migração para ACP](../architecture/decisions/003-migrate-to-acp.md)
+- [ADR 003: Migrar para ACP](../architecture/decisions/003-migrate-to-acp.md)
+- [ADR 004: Sessões Paralelas](../architecture/decisions/004-multi-session-parallel.md)
 - [Agent Client Protocol](https://agentclientprotocol.com)

@@ -1,4 +1,5 @@
 import { defineStore, acceptHMRUpdate } from "pinia";
+import { listZeroSessions } from "@/services/zero";
 
 const STORAGE_KEY = "zero-desktop-workspaces";
 
@@ -23,6 +24,7 @@ export const useWorkspacesStore = defineStore("workspaces", {
   state: () => ({
     workspaces: loadWorkspaces(),
     activePath: null,
+    sessionsByPath: {},
   }),
 
   getters: {
@@ -55,6 +57,7 @@ export const useWorkspacesStore = defineStore("workspaces", {
       if (this.activePath === path) {
         this.activePath = this.workspaces.length > 0 ? this.workspaces[0].path : null;
       }
+      delete this.sessionsByPath[path];
     },
 
     select(path) {
@@ -65,6 +68,17 @@ export const useWorkspacesStore = defineStore("workspaces", {
       const item = this.workspaces.splice(fromIndex, 1)[0];
       this.workspaces.splice(toIndex, 0, item);
       saveWorkspaces(this.workspaces);
+    },
+
+    async loadSessions(path) {
+      if (!path) {
+        return;
+      }
+      try {
+        this.sessionsByPath[path] = await listZeroSessions(path);
+      } catch {
+        this.sessionsByPath[path] = [];
+      }
     },
   },
 });

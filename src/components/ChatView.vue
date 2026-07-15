@@ -1,10 +1,14 @@
 <template>
-  <q-page class="column no-wrap chat-page" :style-fn="pageStyleFn">
-    <q-banner v-if="zeroStore.zeroError" class="bg-negative text-white" dense rounded>
+  <q-page
+    ref="chatPageRef"
+    :class="['column no-wrap chat-page', paneClass]"
+    :style-fn="pageStyleFn"
+  >
+    <q-banner v-if="globalStore.zeroError" class="bg-negative text-white" dense rounded>
       <template v-slot:action>
-        <q-btn flat dense :label="$t('chat.errorDismiss')" @click="zeroStore.zeroError = null" />
+        <q-btn flat dense :label="$t('chat.errorDismiss')" @click="globalStore.zeroError = null" />
       </template>
-      {{ zeroStore.zeroError }}
+      {{ globalStore.zeroError }}
     </q-banner>
 
     <WorkingIndicator />
@@ -16,7 +20,7 @@
       @scroll="onScroll"
     >
       <!-- Loading session history -->
-      <div v-if="zeroStore.isLoadingSession" class="flex flex-center full-height text-grey-6">
+      <div v-if="store.isLoadingSession" class="flex flex-center full-height text-grey-6">
         <div class="text-center" style="width: 100%; max-width: 500px">
           <q-spinner-dots size="40px" color="grey-6" />
           <div class="text-body1 q-mt-md">
@@ -53,15 +57,11 @@
 
       <!-- Empty state -->
       <div
-        v-else-if="
-          zeroStore.messages.length === 0 &&
-          !zeroStore.currentResponse &&
-          !zeroStore.currentThinking
-        "
+        v-else-if="store.messages.length === 0 && !store.currentResponse && !store.currentThinking"
         class="flex flex-center full-height text-grey-6 text-center"
       >
         <!-- Session exists but has no messages -->
-        <div v-if="zeroStore.currentSessionId">
+        <div v-if="store.sessionId">
           <q-icon name="chat_bubble_outline" size="48px" color="grey-5" />
           <div class="text-body1 q-mt-sm">{{ $t("chat.emptySession") }}</div>
           <div class="text-caption q-mt-xs">{{ $t("chat.emptySessionSubtitle") }}</div>
@@ -78,7 +78,7 @@
         </div>
       </div>
 
-      <div v-for="message in zeroStore.messages" :key="message.id">
+      <div v-for="message in store.messages" :key="message.id">
         <TextMessage v-if="message.type === 'text'" :message="message" />
         <ThinkingBlock v-else-if="message.type === 'thinking'" :message="message" />
         <ToolCallMessage v-else-if="message.type === 'tool_call'" :message="message" />
@@ -97,21 +97,21 @@
       </div>
 
       <ThinkingBlock
-        v-if="zeroStore.currentThinking"
-        :message="{ content: zeroStore.currentThinking }"
+        v-if="store.currentThinking"
+        :message="{ content: store.currentThinking }"
         :streaming="true"
       />
 
       <q-chat-message
-        v-if="zeroStore.currentResponse"
-        :text="[renderMarkdown(zeroStore.currentResponse)]"
+        v-if="store.currentResponse"
+        :text="[renderMarkdown(store.currentResponse)]"
         text-html
         class="md-chat-message chat-bubble-generating"
       />
     </div>
 
-    <div class="chat-view__right" v-if="zeroStore.activePlan">
-      <PlanPanel :plan="zeroStore.activePlan" />
+    <div class="chat-view__right" v-if="store.activePlan">
+      <PlanPanel :plan="store.activePlan" />
     </div>
 
     <div :class="['chat-input-bar q-pa-sm', $q.dark.isActive ? 'chat-input-bar--dark' : '']">
@@ -120,10 +120,10 @@
         v-model="input"
         :placeholder="$t('chat.placeholder')"
         :disabled="!canSend"
-        :loading="zeroStore.runInProgress"
-        :working-status="zeroStore.workingStatus"
+        :loading="store.runInProgress"
+        :working-status="store.workingStatus"
         @send="onSend"
-        @cancel="zeroStore.cancelRun()"
+        @cancel="store.cancelRun()"
         @focus="$emit('focus-input')"
       />
     </div>
@@ -131,10 +131,11 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, nextTick, onMounted, onUnmounted } from "vue";
+import { ref, computed, watch, nextTick, onMounted, onUnmounted, provide, inject } from "vue";
 import { useQuasar } from "quasar";
 import { useI18n } from "vue-i18n";
 import { useZeroStore } from "@/stores/zero-store";
+import { useZeroSessionStore } from "@/stores/zero-session-store";
 import { renderMarkdown } from "@/utils/markdown";
 import TextMessage from "@/components/chat/TextMessage.vue";
 import ThinkingBlock from "@/components/chat/ThinkingBlock.vue";
@@ -145,6 +146,8 @@ import ErrorMessage from "@/components/chat/ErrorMessage.vue";
 import WorkingIndicator from "@/components/chat/WorkingIndicator.vue";
 import ChatInput from "@/components/chat/ChatInput.vue";
 import PlanPanel from "@/components/chat/PlanPanel.vue";
+
+const PANE_NARROW_THRESHOLD = 500;
 
 function permissionDecisionBadgeFrom(request) {
   // A recorded decision (status set from a live answer or a replayed
@@ -168,39 +171,46 @@ function permissionDecisionBadgeFrom(request) {
   };
 }
 
-const props = defineEmits(["focus-input"]);
-
-defineProps({
-  workspacePath: {
+const props = defineProps({
+  sessionKey: {
     type: String,
     required: true,
   },
 });
 
+defineEmits(["focus-input"]);
+
 const $q = useQuasar();
-const zeroStore = useZeroStore();
+const store = useZeroSessionStore(props.sessionKey);
+provide("zeroStore", store);
+const globalStore = useZeroStore();
 const { locale } = useI18n();
 const input = ref("");
 const messagesContainer = ref(null);
+const chatPageRef = ref(null);
+const paneWidth = ref(9999);
 const isUserAtBottom = ref(true);
 
+provide("paneWidth", paneWidth);
+
+const paneClass = computed(() =>
+  paneWidth.value < PANE_NARROW_THRESHOLD ? "pane--narrow" : "pane--regular",
+);
+
 const pendingPermission = computed(() =>
-  zeroStore.messages.find(
+  store.messages.find(
     (m) => m.type === "permission_request" && m.status === "pending" && m.answerable,
   ),
 );
 
 const loadingSessionInfo = computed(() => {
-  if (!zeroStore.currentSessionId) return null;
-  return zeroStore.sessions.find((s) => s.session_id === zeroStore.currentSessionId) || null;
+  if (!store.sessionId) return null;
+  return { session_id: store.sessionId };
 });
 
 const canSend = computed(
   () =>
-    zeroStore.hasZero &&
-    !zeroStore.isConnecting &&
-    !zeroStore.runInProgress &&
-    !pendingPermission.value,
+    globalStore.hasZero && !store.isConnecting && !store.runInProgress && !pendingPermission.value,
 );
 
 // Quasar's QPage defaults to `min-height`, which lets content grow past the
@@ -243,11 +253,7 @@ function onScroll() {
 }
 
 watch(
-  [
-    () => zeroStore.messages.length,
-    () => zeroStore.currentResponse,
-    () => zeroStore.currentThinking,
-  ],
+  [() => store.messages.length, () => store.currentResponse, () => store.currentThinking],
   () => {
     scrollToBottomIfNeeded();
   },
@@ -257,18 +263,38 @@ async function onSend({ content, file }) {
   if (!canSend.value || (!content && !file)) return;
 
   input.value = "";
-  await zeroStore.sendMessage(content, file);
+  await store.sendMessage(content, file);
 }
 
 function onKeydown(event) {
-  if (event.key === "Escape" && zeroStore.runInProgress) {
+  if (event.key === "Escape" && store.runInProgress) {
     event.preventDefault();
-    zeroStore.cancelRun();
+    store.cancelRun();
   }
 }
 
-onMounted(() => window.addEventListener("keydown", onKeydown));
-onUnmounted(() => window.removeEventListener("keydown", onKeydown));
+let resizeObserver = null;
+
+onMounted(() => {
+  window.addEventListener("keydown", onKeydown);
+  const el = chatPageRef.value?.$el || chatPageRef.value;
+  if (el && typeof ResizeObserver !== "undefined") {
+    resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        paneWidth.value = entry.contentRect.width;
+      }
+    });
+    resizeObserver.observe(el);
+  }
+});
+
+onUnmounted(() => {
+  window.removeEventListener("keydown", onKeydown);
+  if (resizeObserver) {
+    resizeObserver.disconnect();
+    resizeObserver = null;
+  }
+});
 </script>
 
 <style scoped>
@@ -362,5 +388,21 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
   .chat-view__right {
     display: none;
   }
+}
+
+.pane--narrow .chat-view__right {
+  display: none;
+}
+
+.pane--narrow .chat-input-bar {
+  padding: 2px;
+}
+
+.pane--narrow .chat-messages-scroll {
+  padding: 4px 8px;
+}
+
+.pane--narrow :deep(.tool-call-card) {
+  font-size: 0.9em;
 }
 </style>
