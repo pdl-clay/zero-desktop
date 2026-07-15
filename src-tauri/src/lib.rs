@@ -2,6 +2,7 @@ pub mod acp;
 pub mod bridge;
 pub mod locator;
 pub mod mcp_cache;
+pub mod terminal;
 
 use bridge::{history_path_for, LiveSessionInfo, StartedSession, ZeroBridge};
 use bridge::{get_session_title, remove_session_title, set_session_title};
@@ -539,6 +540,51 @@ async fn respond_to_permission(
     state.respond_to_permission(request_id, option_id).await
 }
 
+#[tauri::command]
+async fn spawn_terminal(
+    state: tauri::State<'_, Arc<terminal::TerminalManager>>,
+    key: String,
+    cwd: String,
+    cols: u16,
+    rows: u16,
+) -> Result<terminal::TerminalSpawnInfo, String> {
+    state.spawn(key, cwd, cols, rows).await
+}
+
+#[tauri::command]
+async fn write_terminal(
+    state: tauri::State<'_, Arc<terminal::TerminalManager>>,
+    key: String,
+    data: String,
+) -> Result<(), String> {
+    state.write(key, data).await
+}
+
+#[tauri::command]
+async fn resize_terminal(
+    state: tauri::State<'_, Arc<terminal::TerminalManager>>,
+    key: String,
+    cols: u16,
+    rows: u16,
+) -> Result<(), String> {
+    state.resize(key, cols, rows).await
+}
+
+#[tauri::command]
+async fn kill_terminal(
+    state: tauri::State<'_, Arc<terminal::TerminalManager>>,
+    key: String,
+) -> Result<(), String> {
+    state.kill(key).await
+}
+
+#[tauri::command]
+async fn list_terminals(
+    state: tauri::State<'_, Arc<terminal::TerminalManager>>,
+) -> Result<Vec<terminal::LiveTerminalInfo>, String> {
+    Ok(state.list().await)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -553,6 +599,9 @@ pub fn run() {
 
             let bridge = Arc::new(ZeroBridge::new(app.handle().clone()));
             app.manage(bridge);
+
+            let terminal_manager = Arc::new(terminal::TerminalManager::new(app.handle().clone()));
+            app.manage(terminal_manager);
 
             Ok(())
         })
@@ -576,7 +625,12 @@ pub fn run() {
             check_mcp_backend,
             check_mcp_backend_cached,
             load_mcp_status_cache,
-            list_mcp_tools
+            list_mcp_tools,
+            spawn_terminal,
+            write_terminal,
+            resize_terminal,
+            kill_terminal,
+            list_terminals
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -584,6 +638,8 @@ pub fn run() {
             if let tauri::RunEvent::Exit = event {
                 let state = _app_handle.state::<Arc<ZeroBridge>>();
                 tauri::async_runtime::block_on(state.kill_all());
+                let terminal_state = _app_handle.state::<Arc<terminal::TerminalManager>>();
+                tauri::async_runtime::block_on(terminal_state.kill_all());
             }
         });
 }

@@ -108,6 +108,17 @@ export default {
     editedFilesEmpty: "No files edited yet",
     editedFilesEditN: "Edit {n}",
   },
+  terminal: {
+    panelTitle: "Terminal",
+    newTab: "New terminal",
+    closeTab: "Close terminal",
+    defaultTitle: "Terminal",
+    collapsePanel: "Collapse terminal panel",
+    expandPanel: "Expand terminal panel",
+    citeToChat: "Cite output to chat",
+    citeNoTarget: "Open a terminal and focus a chat panel first",
+    exited: "Exited ({code})",
+  },
   common: {
     cancel: "Cancel",
     ok: "OK",

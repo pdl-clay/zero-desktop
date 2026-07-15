@@ -11,24 +11,39 @@
     </template>
 
     <template v-else-if="openKeys.length === 1">
-      <div :class="paneCardClass">
+      <div :class="paneCardClass" @mousedown.capture="onFocusInput(openKeys[0])">
         <SessionPaneHeader :session-key="openKeys[0]" />
-        <ChatView :session-key="openKeys[0]" :key="openKeys[0]" class="col" />
+        <ChatView
+          :session-key="openKeys[0]"
+          :key="openKeys[0]"
+          class="col"
+          @focus-input="onFocusInput(openKeys[0])"
+        />
       </div>
     </template>
 
     <template v-else-if="openKeys.length === 2">
       <q-splitter v-model="splitterH" class="fit">
         <template #before>
-          <div :class="paneCardClass">
+          <div :class="paneCardClass" @mousedown.capture="onFocusInput(openKeys[0])">
             <SessionPaneHeader :session-key="openKeys[0]" />
-            <ChatView :session-key="openKeys[0]" :key="openKeys[0]" class="col" />
+            <ChatView
+              :session-key="openKeys[0]"
+              :key="openKeys[0]"
+              class="col"
+              @focus-input="onFocusInput(openKeys[0])"
+            />
           </div>
         </template>
         <template #after>
-          <div :class="paneCardClass">
+          <div :class="paneCardClass" @mousedown.capture="onFocusInput(openKeys[1])">
             <SessionPaneHeader :session-key="openKeys[1]" />
-            <ChatView :session-key="openKeys[1]" :key="openKeys[1]" class="col" />
+            <ChatView
+              :session-key="openKeys[1]"
+              :key="openKeys[1]"
+              class="col"
+              @focus-input="onFocusInput(openKeys[1])"
+            />
           </div>
         </template>
       </q-splitter>
@@ -37,23 +52,38 @@
     <template v-else-if="openKeys.length === 3">
       <q-splitter v-model="splitterOuter" class="fit">
         <template #before>
-          <div :class="paneCardClass">
+          <div :class="paneCardClass" @mousedown.capture="onFocusInput(openKeys[0])">
             <SessionPaneHeader :session-key="openKeys[0]" />
-            <ChatView :session-key="openKeys[0]" :key="openKeys[0]" class="col" />
+            <ChatView
+              :session-key="openKeys[0]"
+              :key="openKeys[0]"
+              class="col"
+              @focus-input="onFocusInput(openKeys[0])"
+            />
           </div>
         </template>
         <template #after>
           <q-splitter v-model="splitterInnerV" horizontal class="fit">
             <template #before>
-              <div :class="paneCardClass">
+              <div :class="paneCardClass" @mousedown.capture="onFocusInput(openKeys[1])">
                 <SessionPaneHeader :session-key="openKeys[1]" />
-                <ChatView :session-key="openKeys[1]" :key="openKeys[1]" class="col" />
+                <ChatView
+                  :session-key="openKeys[1]"
+                  :key="openKeys[1]"
+                  class="col"
+                  @focus-input="onFocusInput(openKeys[1])"
+                />
               </div>
             </template>
             <template #after>
-              <div :class="paneCardClass">
+              <div :class="paneCardClass" @mousedown.capture="onFocusInput(openKeys[2])">
                 <SessionPaneHeader :session-key="openKeys[2]" />
-                <ChatView :session-key="openKeys[2]" :key="openKeys[2]" class="col" />
+                <ChatView
+                  :session-key="openKeys[2]"
+                  :key="openKeys[2]"
+                  class="col"
+                  @focus-input="onFocusInput(openKeys[2])"
+                />
               </div>
             </template>
           </q-splitter>
@@ -66,15 +96,25 @@
         <template #before>
           <q-splitter v-model="splitterLeftV" horizontal class="fit">
             <template #before>
-              <div :class="paneCardClass">
+              <div :class="paneCardClass" @mousedown.capture="onFocusInput(openKeys[0])">
                 <SessionPaneHeader :session-key="openKeys[0]" />
-                <ChatView :session-key="openKeys[0]" :key="openKeys[0]" class="col" />
+                <ChatView
+                  :session-key="openKeys[0]"
+                  :key="openKeys[0]"
+                  class="col"
+                  @focus-input="onFocusInput(openKeys[0])"
+                />
               </div>
             </template>
             <template #after>
-              <div :class="paneCardClass">
+              <div :class="paneCardClass" @mousedown.capture="onFocusInput(openKeys[1])">
                 <SessionPaneHeader :session-key="openKeys[1]" />
-                <ChatView :session-key="openKeys[1]" :key="openKeys[1]" class="col" />
+                <ChatView
+                  :session-key="openKeys[1]"
+                  :key="openKeys[1]"
+                  class="col"
+                  @focus-input="onFocusInput(openKeys[1])"
+                />
               </div>
             </template>
           </q-splitter>
@@ -82,15 +122,25 @@
         <template #after>
           <q-splitter v-model="splitterRightV" horizontal class="fit">
             <template #before>
-              <div :class="paneCardClass">
+              <div :class="paneCardClass" @mousedown.capture="onFocusInput(openKeys[2])">
                 <SessionPaneHeader :session-key="openKeys[2]" />
-                <ChatView :session-key="openKeys[2]" :key="openKeys[2]" class="col" />
+                <ChatView
+                  :session-key="openKeys[2]"
+                  :key="openKeys[2]"
+                  class="col"
+                  @focus-input="onFocusInput(openKeys[2])"
+                />
               </div>
             </template>
             <template #after>
-              <div :class="paneCardClass">
+              <div :class="paneCardClass" @mousedown.capture="onFocusInput(openKeys[3])">
                 <SessionPaneHeader :session-key="openKeys[3]" />
-                <ChatView :session-key="openKeys[3]" :key="openKeys[3]" class="col" />
+                <ChatView
+                  :session-key="openKeys[3]"
+                  :key="openKeys[3]"
+                  class="col"
+                  @focus-input="onFocusInput(openKeys[3])"
+                />
               </div>
             </template>
           </q-splitter>
@@ -104,12 +154,14 @@
 import { ref, computed } from "vue";
 import { useQuasar } from "quasar";
 import { useSessionRuntimeStore } from "@/stores/session-runtime-store";
+import { useTerminalRuntimeStore } from "@/stores/terminal-runtime-store";
 import { useWorkspacesStore } from "@/stores/workspaces-store";
 import ChatView from "@/components/ChatView.vue";
 import SessionPaneHeader from "@/components/chat/SessionPaneHeader.vue";
 
 const $q = useQuasar();
 const runtime = useSessionRuntimeStore();
+const terminalRuntime = useTerminalRuntimeStore();
 const workspacesStore = useWorkspacesStore();
 
 // Each workspace only ever sees its OWN panels in this grid - a panel
@@ -120,6 +172,16 @@ const workspacesStore = useWorkspacesStore();
 // layout "formation" (which keys, in which order) come back exactly as it
 // was when switching back - nothing is torn down on the way out.
 const openKeys = computed(() => runtime.visibleKeys(workspacesStore.activePath));
+
+// Marks a pane as "the one the user is working in" - both on an explicit
+// textarea focus (ChatView's own @focus-input emit) and on a plain
+// mousedown anywhere in the pane (scrolling the transcript, clicking a tool
+// call, etc.), since "focused" here means "the terminal panel's cite action
+// should target this one", not literally "caret is in the textarea".
+function onFocusInput(key) {
+  if (!key) return;
+  runtime.focusPanel(key, workspacesStore.activePath);
+}
 
 // q-page-container never gets an explicit CSS height of its own (Quasar only
 // gives it padding for drawer offsets), so the `.fit` (height:100%) chain
@@ -134,7 +196,15 @@ const openKeys = computed(() => runtime.visibleKeys(workspacesStore.activePath))
 // utility, because `.fit` sets `height: 100% !important` - which silently
 // wins over this inline style and was the reason an earlier version of this
 // fix (still using `.fit` alongside the inline height) had no effect at all.
-const gridHeight = computed(() => `${$q.screen.height}px`);
+//
+// Subtracts the terminal panel's reserved height when it's open, the same
+// way this height already accounts for Quasar's own screen height - the
+// terminal panel is a custom fixed-position element (Quasar drawers can't
+// dock to the bottom), so nothing else shrinks this grid for it.
+const gridHeight = computed(() => {
+  const reserved = terminalRuntime.panelOpen ? terminalRuntime.panelHeightPx : 0;
+  return `${$q.screen.height - reserved}px`;
+});
 
 // Each pane gets the same floating-card treatment as ChatInput (rounded
 // corners, translucent tinted background, hairline border) instead of being

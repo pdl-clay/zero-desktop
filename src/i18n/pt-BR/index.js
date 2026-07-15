@@ -108,6 +108,17 @@ export default {
     editedFilesEmpty: "Nenhum arquivo editado ainda",
     editedFilesEditN: "Edição {n}",
   },
+  terminal: {
+    panelTitle: "Terminal",
+    newTab: "Novo terminal",
+    closeTab: "Fechar terminal",
+    defaultTitle: "Terminal",
+    collapsePanel: "Recolher painel de terminal",
+    expandPanel: "Expandir painel de terminal",
+    citeToChat: "Citar saída no chat",
+    citeNoTarget: "Abra um terminal e foque um painel de chat primeiro",
+    exited: "Encerrado ({code})",
+  },
   common: {
     cancel: "Cancelar",
     ok: "OK",

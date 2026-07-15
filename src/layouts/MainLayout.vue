@@ -280,6 +280,8 @@
       v-if="workspacesStore.hasActive && sessionRuntime.focusedKeyFor(workspacesStore.activePath)"
       v-model="mcpDrawerOpen"
     />
+
+    <TerminalPanel v-if="workspacesStore.hasActive" />
   </q-layout>
 </template>
 
@@ -298,6 +300,7 @@ import {
 } from "@/services/zero";
 import SessionTileGrid from "@/components/SessionTileGrid.vue";
 import McpDrawer from "@/components/McpDrawer.vue";
+import TerminalPanel from "@/components/terminal/TerminalPanel.vue";
 import StatusBadge from "@/components/StatusBadge.vue";
 import WorkspaceAvatar from "@/components/WorkspaceAvatar.vue";
 import SessionIndicator from "@/components/SessionIndicator.vue";

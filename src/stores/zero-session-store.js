@@ -33,6 +33,11 @@ export function useZeroSessionStore(key) {
       sessionKey: key,
       sessionId: null,
       cwd: null,
+      // The chat compose box's text. Lives here (not a local ref in
+      // ChatView.vue) so other parts of the app - e.g. the terminal panel's
+      // "cite to chat" action - can insert text into whichever panel is
+      // focused without reaching into another component's internals.
+      draftText: "",
       // The model THIS session's own process is actually running under -
       // snapshotted whenever it (re)connects, and updated only when THIS
       // session explicitly switches. Deliberately separate from the global

@@ -115,7 +115,7 @@
     <div :class="['chat-input-bar q-pa-sm', $q.dark.isActive ? 'chat-input-bar--dark' : '']">
       <PendingPermissionPanel v-if="pendingPermission" :request="pendingPermission" />
       <ChatInput
-        v-model="input"
+        v-model="store.draftText"
         :placeholder="$t('chat.placeholder')"
         :disabled="!canSend"
         :loading="store.runInProgress"
@@ -183,7 +183,6 @@ const store = useZeroSessionStore(props.sessionKey);
 provide("zeroStore", store);
 const globalStore = useZeroStore();
 const { locale } = useI18n();
-const input = ref("");
 const messagesContainer = ref(null);
 const chatPageRef = ref(null);
 const paneWidth = ref(9999);
@@ -260,7 +259,7 @@ watch(
 async function onSend({ content, file }) {
   if (!canSend.value || (!content && !file)) return;
 
-  input.value = "";
+  store.draftText = "";
   await store.sendMessage(content, file);
 }
 
