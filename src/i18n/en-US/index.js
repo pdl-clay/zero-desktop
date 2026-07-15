@@ -94,6 +94,11 @@ export default {
     tools: "Tools",
     checkFailed: "Failed to check server",
     footerHint: "Click a server to check status and tools",
+    collapsePanel: "Collapse panel",
+    expandPanel: "Expand panel",
+    editedFilesTitle: "Edited files",
+    editedFilesEmpty: "No files edited yet",
+    editedFilesEditN: "Edit {n}",
   },
   common: {
     cancel: "Cancel",

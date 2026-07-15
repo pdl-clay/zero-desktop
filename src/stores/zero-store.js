@@ -19,10 +19,14 @@ import {
   switchZeroModel,
   listMcpBackends,
   checkMcpBackend,
+  listMcpTools,
+  loadMcpStatusCache,
 } from "@/services/zero";
 
 const MAX_STDERR_LINES = 20;
 const SESSION_SYNC_INTERVAL_MS = 3000;
+
+import { isEditTool } from "@/utils/edit-tools";
 
 let _idCounter = 0;
 function nextId() {
@@ -59,6 +63,7 @@ export const useZeroStore = defineStore("zero", {
     _modelsLoaded: false,
     permissionMode: "ask",
     mcpBackends: [],
+    mcpTools: [],
     isLoadingMcp: false,
     _mcpLoaded: false,
   }),
@@ -85,6 +90,28 @@ export const useZeroStore = defineStore("zero", {
       if (!state.currentPlan || state.currentPlan.length === 0) return null;
       const allDone = state.currentPlan.every((item) => item.status === "completed");
       return allDone ? null : state.currentPlan;
+    },
+
+    // Groups edit_file/write_file tool calls by path, preserving both
+    // file-encounter order and per-file edit order. Derived purely from
+    // state.messages, which is already reset/rebuilt on session switch
+    // (startSession/openSession), so no manual watcher is needed to keep
+    // this in sync.
+    editedFiles(state) {
+      const order = [];
+      const byPath = new Map();
+      for (const m of state.messages) {
+        if (m.type !== "tool_call") continue;
+        if (!isEditTool(m.toolName)) continue;
+        const path = m.input?.path;
+        if (!path) continue;
+        if (!byPath.has(path)) {
+          byPath.set(path, { path, edits: [] });
+          order.push(path);
+        }
+        byPath.get(path).edits.push(m);
+      }
+      return order.map((p) => byPath.get(p));
     },
   },
 
@@ -695,13 +722,70 @@ export const useZeroStore = defineStore("zero", {
       if (this._mcpLoaded && !force) return;
       this.isLoadingMcp = true;
       try {
-        this.mcpBackends = await listMcpBackends();
+        // Load the persisted status cache first so the drawer can render
+        // immediately with last-known statuses.
+        const cache = await loadMcpStatusCache().catch(() => ({ servers: {} }));
+        const [backends, tools] = await Promise.all([
+          listMcpBackends(),
+          listMcpTools().catch(() => []),
+        ]);
+
+        // Overlay cached statuses if the backend list didn't already include them.
+        for (const backend of backends) {
+          if (!backend.status) {
+            const cached = cache.servers[backend.name];
+            if (cached) {
+              backend.status = cached.status;
+              backend.error = cached.error || null;
+              if (cached.toolCount > 0 && !backend.toolCount) {
+                backend.toolCount = cached.toolCount;
+              }
+            }
+          }
+        }
+
+        this.mcpBackends = backends;
+        this.mcpTools = tools;
         this._mcpLoaded = true;
+
+        // Live-check only when forced or when there is no cached data yet.
+        if (this.mcpBackends.length > 0 && force) {
+          this.checkAllMcpBackends();
+        } else if (this.mcpBackends.length > 0) {
+          const hasAnyCache = this.mcpBackends.some((b) => Boolean(b.status));
+          if (!hasAnyCache) {
+            this.checkAllMcpBackends();
+          }
+        }
       } catch {
         this.mcpBackends = [];
+        this.mcpTools = [];
       } finally {
         this.isLoadingMcp = false;
       }
+    },
+
+    async loadMcpTools({ force = false } = {}) {
+      if (this._mcpLoaded && !force) return;
+      try {
+        this.mcpTools = await listMcpTools();
+      } catch {
+        this.mcpTools = [];
+      }
+    },
+
+    _toolsForBackend(backendName) {
+      return this.mcpTools.filter((tool) =>
+        tool.name.toLowerCase().startsWith(`${backendName.toLowerCase()}_`),
+      );
+    },
+
+    _countToolsForBackend(backendName) {
+      return this._toolsForBackend(backendName).length;
+    },
+
+    async checkAllMcpBackends() {
+      await Promise.all(this.mcpBackends.map((backend) => this.checkMcpBackend(backend.name)));
     },
 
     async checkMcpBackend(name) {
@@ -713,8 +797,16 @@ export const useZeroStore = defineStore("zero", {
         const result = await checkMcpBackend(name);
         if (backend) {
           backend.status = result.status;
-          backend.toolCount = result.tool_count;
-          backend.tools = result.tools || [];
+          // Prefer tool data reported by the backend check; the global list may
+          // use different naming conventions and miss tools when the server is OK.
+          if (result.tools && result.tools.length > 0) {
+            backend.tools = result.tools.map((t) => (typeof t === "string" ? { name: t } : t));
+            backend.toolCount = result.toolCount ?? backend.tools.length;
+          } else {
+            const tools = this._toolsForBackend(name);
+            backend.tools = tools;
+            backend.toolCount = result.toolCount ?? tools.length;
+          }
           backend._error = result.error || null;
         }
       } catch (err) {

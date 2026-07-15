@@ -1,5 +1,5 @@
 <template>
-  <q-layout view="lHh Lpr lFf">
+  <q-layout view="lHh LpR lFf">
     <q-drawer
       v-model="leftDrawerOpen"
       show-if-above
@@ -103,19 +103,6 @@
 
           <q-btn flat round dense icon="settings" color="grey-7" size="sm" class="q-mt-xs q-mb-xs">
             <q-tooltip>{{ $t("settings.title") }}</q-tooltip>
-          </q-btn>
-
-          <q-btn
-            flat
-            round
-            dense
-            icon="dns"
-            color="grey-7"
-            size="sm"
-            class="q-mt-xs q-mb-xs"
-            @click="mcpDrawerRef?.toggle()"
-          >
-            <q-tooltip>{{ $t("mcp.title") }}</q-tooltip>
           </q-btn>
         </div>
         <!-- Right session panel -->
@@ -288,7 +275,7 @@
       <ChatView v-else :workspace-path="workspacesStore.activePath" @focus-input="onFocusInput" />
     </q-page-container>
 
-    <McpDrawer ref="mcpDrawerRef" />
+    <McpDrawer v-model="mcpDrawerOpen" />
   </q-layout>
 </template>
 
@@ -307,7 +294,7 @@ const { t } = useI18n();
 const zeroStore = useZeroStore();
 const workspacesStore = useWorkspacesStore();
 const leftDrawerOpen = ref(true);
-const mcpDrawerRef = ref(null);
+const mcpDrawerOpen = ref(true);
 
 const isSmallScreen = $q.screen.lt.md;
 const sessionPanelOpen = ref(!isSmallScreen);
@@ -413,6 +400,9 @@ onMounted(async () => {
     workspacesStore.workspaces,
   );
   await zeroStore.locateZero();
+  // Pre-load MCP list and cached statuses in the background so the drawer
+  // opens with data already available.
+  zeroStore.loadMcpBackends();
 });
 
 function toggleTheme() {

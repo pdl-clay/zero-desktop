@@ -38,11 +38,19 @@ impl OutputEvent {
     }
 }
 
-/// ACP's tool_call/tool_call_update don't carry a clean `name` field like
-/// zero exec's tool_call event did (verified live) - `toolCallId` looks like
-/// `"read_file_0"`. Best-effort recovery of the tool name by stripping the
-/// trailing `_<digits>` counter.
-fn tool_name_from_call_id(tool_call_id: &str) -> String {
+/// ACP's tool_call/tool_call_update identify calls with a `toolCallId` like
+/// `"call_00_..."` and put the human-readable tool name in `title` (e.g.
+/// `"edit_file /path/to/file"`). Prefer the title; fall back to stripping a
+/// trailing `_<digits>` counter from the id when the title is missing.
+fn tool_name_from_call(tool_call_id: &str, title: Option<&str>) -> String {
+    if let Some(title) = title {
+        let trimmed = title.trim();
+        if !trimmed.is_empty() {
+            // Titles often include the first argument (e.g. "edit_file note.txt");
+            // keep only the first whitespace-delimited token as the tool name.
+            return trimmed.split_whitespace().next().unwrap_or(trimmed).to_string();
+        }
+    }
     match tool_call_id.rsplit_once('_') {
         Some((prefix, suffix)) if !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit()) => {
             prefix.to_string()
@@ -133,7 +141,8 @@ fn translate_session_update(params: &serde_json::Value) -> Option<OutputEvent> {
         }
         "tool_call" => {
             let tool_call_id = update["toolCallId"].as_str().unwrap_or("");
-            let name = tool_name_from_call_id(tool_call_id);
+            let title = update["title"].as_str();
+            let name = tool_name_from_call(tool_call_id, title);
             Some(OutputEvent::new(
                 "tool_call",
                 serde_json::json!({
@@ -168,8 +177,12 @@ fn translate_session_update(params: &serde_json::Value) -> Option<OutputEvent> {
 fn translate_permission_request(correlation_id: &str, params: &serde_json::Value) -> serde_json::Value {
     let tool_call = &params["toolCall"];
     let tool_call_id = tool_call["toolCallId"].as_str().unwrap_or("");
-    let fallback_name = tool_name_from_call_id(tool_call_id);
-    let tool_name = tool_call["title"].as_str().unwrap_or(&fallback_name);
+    let title = tool_call["title"].as_str();
+    let fallback_name = tool_name_from_call(tool_call_id, title);
+    let tool_name = title.map(|t| {
+        let trimmed = t.trim();
+        trimmed.split_whitespace().next().unwrap_or(trimmed).to_string()
+    }).unwrap_or(fallback_name);
     let reason = tool_call["rawInput"]["reason"].as_str().unwrap_or("");
     let options = params.get("options").cloned().unwrap_or(serde_json::json!([]));
 
@@ -1009,15 +1022,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_tool_name_from_call_id_strips_counter() {
-        assert_eq!(tool_name_from_call_id("read_file_0"), "read_file");
-        assert_eq!(tool_name_from_call_id("list_directory_12"), "list_directory");
-        assert_eq!(tool_name_from_call_id("mcp_firecrawl_scrape_3"), "mcp_firecrawl_scrape");
+    fn test_tool_name_from_call_prefers_title() {
+        assert_eq!(tool_name_from_call("call_00_abc", Some("edit_file note.txt")), "edit_file");
+        assert_eq!(tool_name_from_call("call_00_abc", Some("write_file")), "write_file");
     }
 
     #[test]
-    fn test_tool_name_from_call_id_no_counter_suffix() {
-        assert_eq!(tool_name_from_call_id("request_permissions"), "request_permissions");
+    fn test_tool_name_from_call_strips_counter_when_no_title() {
+        assert_eq!(tool_name_from_call("read_file_0", None), "read_file");
+        assert_eq!(tool_name_from_call("list_directory_12", None), "list_directory");
+        assert_eq!(tool_name_from_call("mcp_firecrawl_scrape_3", None), "mcp_firecrawl_scrape");
+    }
+
+    #[test]
+    fn test_tool_name_from_call_no_counter_suffix_when_no_title() {
+        assert_eq!(tool_name_from_call("request_permissions", None), "request_permissions");
     }
 
     #[test]

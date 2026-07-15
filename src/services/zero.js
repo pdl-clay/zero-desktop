@@ -180,3 +180,22 @@ export async function listMcpBackends() {
 export async function checkMcpBackend(name) {
   return invoke("check_mcp_backend", { name });
 }
+
+/**
+ * List all tools exposed by enabled MCP servers.
+ * Unlike `checkMcpBackend`, this returns real tools with descriptions.
+ * @returns {Promise<Array<{ name: string, description: string | null }>>}
+ */
+export async function listMcpTools() {
+  return invoke("list_mcp_tools");
+}
+
+/**
+ * Load the persisted MCP status cache from disk.
+ * Returns immediately with cached statuses so the drawer can render
+ * without waiting for live checks.
+ * @returns {Promise<{ servers: Record<string, { status: string, toolCount: number, error: string|null, checkedAt: number|null }>, generatedAt: number|null }>}
+ */
+export async function loadMcpStatusCache() {
+  return invoke("load_mcp_status_cache");
+}

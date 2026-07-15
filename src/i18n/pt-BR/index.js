@@ -94,6 +94,11 @@ export default {
     tools: "Ferramentas",
     checkFailed: "Falha ao verificar servidor",
     footerHint: "Clique em um servidor para verificar status e ferramentas",
+    collapsePanel: "Recolher painel",
+    expandPanel: "Expandir painel",
+    editedFilesTitle: "Arquivos editados",
+    editedFilesEmpty: "Nenhum arquivo editado ainda",
+    editedFilesEditN: "Edição {n}",
   },
   common: {
     cancel: "Cancelar",

@@ -1,6 +1,7 @@
 pub mod acp;
 pub mod bridge;
 pub mod locator;
+pub mod mcp_cache;
 
 use bridge::{history_path_for, ZeroBridge};
 use bridge::{get_session_title, remove_session_title, set_session_title};
@@ -32,6 +33,10 @@ pub struct McpBackendInfo {
     pub allow_granted: i64,
     #[serde(rename = "denyGranted", default)]
     pub deny_granted: i64,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
@@ -45,6 +50,21 @@ pub struct McpCheckResult {
     pub tools: Vec<serde_json::Value>,
     #[serde(default)]
     pub error: Option<String>,
+    #[serde(rename = "fromCache", default)]
+    pub from_cache: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+pub struct McpToolInfo {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+struct McpToolsOutput {
+    #[serde(default)]
+    tools: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
@@ -341,8 +361,22 @@ async fn list_mcp_backends() -> Result<Vec<McpBackendInfo>, String> {
         return Err(format!("zero backends failed: {stderr}"));
     }
 
-    let backends: BackendsOutput = serde_json::from_slice(&output.stdout)
+    let mut backends: BackendsOutput = serde_json::from_slice(&output.stdout)
         .map_err(|e| format!("Failed to parse backends JSON: {e}"))?;
+
+    // Overlay cached statuses so the first drawer open already shows data.
+    let cached = mcp_cache::all();
+    for backend in &mut backends.mcp_servers {
+        if let Some(entry) = cached.get(&backend.name) {
+            backend.status = Some(entry.status.clone());
+            if entry.error.is_some() {
+                backend.error = entry.error.clone();
+            }
+            if entry.tool_count > 0 && backend.tool_count == 0 {
+                backend.tool_count = entry.tool_count;
+            }
+        }
+    }
 
     Ok(backends.mcp_servers)
 }
@@ -370,7 +404,72 @@ async fn check_mcp_backend(name: String) -> Result<McpCheckResult, String> {
     let result: McpCheckResult = serde_json::from_slice(&output.stdout)
         .map_err(|e| format!("Failed to parse mcp check JSON: {e}"))?;
 
+    mcp_cache::set_status(
+        &result.server_name,
+        &result.status,
+        result.tool_count,
+        result.error.clone(),
+    );
+
     Ok(result)
+}
+
+/// Return the current MCP status cache contents for fast initial rendering.
+#[tauri::command]
+fn load_mcp_status_cache() -> Result<mcp_cache::McpStatusCache, String> {
+    Ok(mcp_cache::load())
+}
+
+#[tauri::command]
+async fn check_mcp_backend_cached(name: String) -> Result<McpCheckResult, String> {
+    if let Some(entry) = mcp_cache::get(&name) {
+        Ok(McpCheckResult {
+            server_name: name,
+            status: entry.status,
+            tool_count: entry.tool_count,
+            tools: Vec::new(),
+            error: entry.error,
+            from_cache: true,
+        })
+    } else {
+        check_mcp_backend(name).await
+    }
+}
+
+#[tauri::command]
+async fn list_mcp_tools() -> Result<Vec<McpToolInfo>, String> {
+    let zero_path = locate_zero()
+        .map_err(|e| format!("Failed to locate zero CLI: {e}"))?
+        .path;
+
+    let output = tokio::process::Command::new(&zero_path)
+        .arg("mcp")
+        .arg("tools")
+        .arg("list")
+        .arg("--json")
+        .output()
+        .await
+        .map_err(|e| format!("Failed to run zero mcp tools list: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("zero mcp tools list failed: {stderr}"));
+    }
+
+    let parsed: McpToolsOutput = serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("Failed to parse mcp tools list JSON: {e}"))?;
+
+    let tools = parsed
+        .tools
+        .into_iter()
+        .map(|value| McpToolInfo {
+            name: value["name"].as_str().unwrap_or("").to_string(),
+            description: value["description"].as_str().map(String::from),
+        })
+        .filter(|tool| !tool.name.is_empty())
+        .collect();
+
+    Ok(tools)
 }
 
 #[tauri::command]
@@ -457,7 +556,10 @@ pub fn run() {
             list_zero_models,
             switch_zero_model,
             list_mcp_backends,
-            check_mcp_backend
+            check_mcp_backend,
+            check_mcp_backend_cached,
+            load_mcp_status_cache,
+            list_mcp_tools
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

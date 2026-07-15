@@ -99,6 +99,7 @@ import { useQuasar } from "quasar";
 import { copyToClipboard } from "quasar";
 import { useI18n } from "vue-i18n";
 import { planIcon, planColor } from "@/utils/plan";
+import { isEditTool, getEditStrings } from "@/utils/edit-tools";
 
 const props = defineProps({
   message: { type: Object, required: true },
@@ -168,24 +169,23 @@ const editPreview = computed(() => {
   const name = props.message.toolName;
   const input = props.message.input || {};
 
-  if (
-    name === "edit_file" &&
-    typeof input.old_str === "string" &&
-    typeof input.new_str === "string"
-  ) {
-    const lines = [
-      ...input.old_str.split("\n").map((text) => ({ type: "removed", text: `- ${text}` })),
-      ...input.new_str.split("\n").map((text) => ({ type: "added", text: `+ ${text}` })),
-    ];
-    return { path: input.path || "", lines };
-  }
+  if (isEditTool(name)) {
+    const editStrings = getEditStrings(input);
+    if (editStrings) {
+      const lines = [
+        ...editStrings.oldStr.split("\n").map((text) => ({ type: "removed", text: `- ${text}` })),
+        ...editStrings.newStr.split("\n").map((text) => ({ type: "added", text: `+ ${text}` })),
+      ];
+      return { path: input.path || "", lines };
+    }
 
-  // write_file's exact arg name isn't confirmed against the real CLI yet
-  // (didn't get a live sample) - `content` is the common convention, and
-  // this degrades harmlessly to the generic result view if it's wrong.
-  if (name === "write_file" && typeof input.content === "string") {
-    const lines = input.content.split("\n").map((text) => ({ type: "added", text: `+ ${text}` }));
-    return { path: input.path || "", lines };
+    // write_file's exact arg name isn't confirmed against the real CLI yet
+    // (didn't get a live sample) - `content` is the common convention, and
+    // this degrades harmlessly to the generic result view if it's wrong.
+    if (typeof input.content === "string") {
+      const lines = input.content.split("\n").map((text) => ({ type: "added", text: `+ ${text}` }));
+      return { path: input.path || "", lines };
+    }
   }
 
   return null;
