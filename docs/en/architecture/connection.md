@@ -107,7 +107,7 @@ When the locator cannot find the binary:
 - **One `zero acp` process per session**, not a single process shared across the app - `zero` has no way to cancel a single in-flight turn, so cancellation is "kill the process," and that shouldn't take other open conversations down with it.
 - **We do not embed the zero binary** in the zero-desktop package to preserve zero's independent lifecycle.
 - **We do not modify zero**; we only use its public interfaces.
-- **Single workspace in alpha**: the alpha starts with one workspace. Multi-workspace support will be added later.
+- **Multi-workspace, multi-session**: zero-desktop now supports multiple workspaces open at once, each with up to 4 concurrent session panels (see [ADR 004](./decisions/004-multi-session-parallel.md)); the backend imposes no global process cap.
 
 ## 7. References
 

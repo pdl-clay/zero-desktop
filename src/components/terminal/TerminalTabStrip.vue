@@ -15,7 +15,9 @@
         class="terminal-tab-chip__dot"
         :class="'terminal-tab-chip__dot--' + (keyMeta[key]?.status || 'spawning')"
       />
-      <span class="terminal-tab-chip__name">{{ keyMeta[key]?.title || $t("terminal.defaultTitle") }}</span>
+      <span class="terminal-tab-chip__name">{{
+        keyMeta[key]?.title || $t("terminal.defaultTitle")
+      }}</span>
       <q-icon
         name="close"
         size="13px"

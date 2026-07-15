@@ -90,40 +90,41 @@ Flow:
 
 ### Workspace Selection
 
-When `activePath` changes (via `workspacesStore.select()`), a `watch` in `MainLayout.vue` triggers:
+Since multi-session parallel chat (see [ADR 004](../architecture/decisions/004-multi-session-parallel.md)), switching workspaces no longer kills or starts any session — it is pure navigation. A `watch` on `workspacesStore.activePath` in `MainLayout.vue` only refreshes the session list for the newly active workspace:
 
 ```
 watch(activePath)
-  → zeroStore.stopSession()      // disconnect from previous workspace
-  → zeroStore.startSession(cwd)  // connect to new workspace
-  → zeroStore.loadSessions(cwd)  // refresh session list
+  → workspacesStore.loadSessions(newPath)  // refresh session list for the new workspace
 ```
 
-The `startSession` action:
+Panels belonging to other workspaces keep running in the background (up to the per-workspace cap of `MAX_OPEN_PANELS`); switching workspaces just changes which panels `SessionTileGrid.vue` renders, via `sessionRuntime.visibleKeys(workspacePath)`.
 
-1. Clears messages from the previous workspace.
-2. Calls `setupListeners()` to attach `zero:event`, `zero:stderr`, `zero:process-exited`, and `zero:permission-request` listeners.
-3. Calls the Tauri command `start_zero_session(cwd)` which tells the Rust bridge the workspace directory and spawns `zero acp`.
-4. Sets `isConnected = true`.
+Selecting a workspace also opens or focuses a session for it, via `onSelectWorkspace()`:
 
-The bridge spawns a new `zero acp` process with `session/new` in that workspace directory. The session id is captured from the response and used for subsequent turns.
+1. `workspacesStore.select(ws.path)` sets `activePath`.
+2. If no panel is already open for that workspace's `cwd`, a new key is generated and `openOrFocusSession(key, ws.path, null)` opens a panel for it.
+3. Opening a panel only prepares it (loads history if resuming); the real `zero acp` process is spawned lazily, the first time the user sends a message (see [Session System](./session-system.md)).
 
 ## Rust Backend
 
 ### Tauri Commands
 
-| Command                                | File     | Description                                                                             |
-| -------------------------------------- | -------- | --------------------------------------------------------------------------------------- |
-| `locate_zero_cli`                      | `lib.rs` | Finds zero binary and returns path + version.                                           |
-| `start_zero_session(cwd, session_id?)` | `lib.rs` | Spawns `zero acp` in the workspace directory. Optional `session_id` for `session/load`. |
-| `send_zero_message(content, file?)`    | `lib.rs` | Sends a user message with optional file attachment.                                     |
-| `stop_zero_session`                    | `lib.rs` | Kills the current zero process and clears all session state.                            |
-| `cancel_zero_run`                      | `lib.rs` | Kills the process but preserves session id/history for reattach.                        |
-| `list_zero_sessions(cwd)`              | `lib.rs` | Lists sessions filtered by workspace directory.                                         |
+| Command                                     | File     | Description                                                                                        |
+| ------------------------------------------- | -------- | -------------------------------------------------------------------------------------------------- |
+| `locate_zero_cli`                           | `lib.rs` | Finds zero binary and returns path + version.                                                      |
+| `start_zero_session(key, cwd, session_id?)` | `lib.rs` | Spawns `zero acp` for the given routing key + workspace. Optional `session_id` for `session/load`. |
+| `send_zero_message(key, content, file?)`    | `lib.rs` | Sends a user message (with optional file attachment) to the session identified by `key`.           |
+| `stop_zero_session(key)`                    | `lib.rs` | Kills the process for `key` and clears its session state.                                          |
+| `cancel_zero_run(key)`                      | `lib.rs` | Kills the process for `key` but preserves session id/history for reattach.                         |
+| `switch_zero_model(key, model)`             | `lib.rs` | Updates the active model globally, then kills only the session identified by `key`.                |
+| `list_zero_sessions(cwd)`                   | `lib.rs` | Lists sessions filtered by workspace directory.                                                    |
 
 ### Bridge State (`bridge.rs`)
 
-The `ZeroBridge` manages an `AcpSession` per active workspace:
+`ZeroBridge.sessions` is a `HashMap<String, AcpSession>` keyed by a frontend-owned
+routing key (UUID for new sessions, `session_id` for resumed ones) — not by
+workspace. A single workspace can have several `AcpSession`s live at once (one
+per open panel), and each is independent of the others:
 
 ```rust
 struct AcpSession {
@@ -134,10 +135,10 @@ struct AcpSession {
 }
 ```
 
-- `start(cwd, resume_id)` — kills any previous session's process, spawns a new `zero acp`, completes the `initialize` handshake, and opens the session (`session/new` or `session/load`).
-- `send(content, file?)` — persists the user message to the local history, then fires `session/prompt` in a background task. Returns immediately; progress streams via `zero:event`.
-- `cancel()` — kills the live process but keeps `session_id` and `history_path` so the next `send()` respawns and `session/load`s back in.
-- `stop()` — kills the process and clears all session state.
+- `start(key, cwd, resume_id)` — spawns a new `zero acp` for this key, completes the `initialize` handshake, and opens the session (`session/new` or `session/load`). Does not touch any other key's session.
+- `send(key, content, file?)` — persists the user message to the local history, then fires `session/prompt` in a background task. Returns immediately; progress streams via `zero:event`.
+- `cancel(key)` — kills the live process for this key but keeps its `session_id` and `history_path` so the next `send()` respawns and `session/load`s back in.
+- `stop(key)` — kills the process for this key and clears its session state.
 
 ## Dependencies
 

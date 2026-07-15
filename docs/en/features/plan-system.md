@@ -85,7 +85,11 @@ The bridge does not interpret or modify plan entries; it passes them through ver
 
 ## Frontend
 
-### `zero-store.js` — Plan State
+### Plan State
+
+`currentPlan` lives on the **per-session** `zero-session-store.js` (the
+`useZeroSessionStore(key)` factory store), not on the global `zero-store.js` —
+each open panel tracks its own agent's plan independently.
 
 | State         | Type    | Description                                                    |
 | ------------- | ------- | -------------------------------------------------------------- |

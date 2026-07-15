@@ -113,3 +113,16 @@ closes. File-level `std::sync::Mutex` guards on `session-titles.json` and
 - The session list sidebar shows live badges (working/pending permission) by
   cross-referencing `sessionRuntime.keyMeta` with `session.session_id`.
 - `list_live_sessions` command added for frontend state reconciliation.
+
+> **Update:** Decision #3 above ("Closing a panel does NOT stop the session:
+> only an explicit 'Stop' action kills the process") and the "distinct Close
+> and Stop buttons" described under Architecture were later simplified:
+> `SessionPaneHeader.vue` now has a single close button. `closePanel()` behaves
+> conditionally — it only hides the panel while a turn is running, but also
+> stops and disposes the session once idle, since with a per-workspace panel
+> cap and no separate manual "stop" affordance, an idle session left running
+> would otherwise waste a slot the user has no way to reclaim.
+> `stopAndDispose()` (unconditional kill) still exists, but is only used when
+> the user deletes the underlying session entirely, not from the panel's own
+> close button. See `docs/features/session-system.md` for the current
+> behavior; this ADR is left as a historical record of the original decision.

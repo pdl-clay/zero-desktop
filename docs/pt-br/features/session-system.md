@@ -142,12 +142,12 @@ Após todo handshake bem-sucedido (`session/new`, `session/load`, ou fallback), 
 
 O estado das sessões está dividido em três stores (ver [ADR 004](../architecture/decisions/004-multi-session-parallel.md)):
 
-| Store                      | Tipo                               | Estado principal                                                                                                                    |
-| -------------------------- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `zero-store.js`            | Singleton global                   | `zeroPath`, `availableModels`, `activeModel`, `mcpBackends`, `permissionMode`                                                       |
-| `zero-session-store.js`    | Fábrica `useZeroSessionStore(key)` | `sessionKey`, `sessionId`, `cwd`, `messages[]`, `currentResponse`, `currentThinking`, `currentPlan`, `runInProgress`, `isConnected` |
-| `session-runtime-store.js` | Singleton global                   | `openKeys[]` (máx 4), `focusedKey`, `keyMeta{}` (badges, cwd, título por chave)                                                     |
-| `workspaces-store.js`      | Singleton global                   | `workspaces[]`, `activePath`, `sessionsByPath{}`                                                                                    |
+| Store                      | Tipo                               | Estado principal                                                                                                                                                                                                                     |
+| -------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `zero-store.js`            | Singleton global                   | `zeroPath`, `availableModels`, `activeModel`, `mcpBackends`, `permissionMode`                                                                                                                                                        |
+| `zero-session-store.js`    | Fábrica `useZeroSessionStore(key)` | `sessionKey`, `sessionId`, `cwd`, `messages[]`, `currentResponse`, `currentThinking`, `currentPlan`, `runInProgress`, `isConnected`                                                                                                  |
+| `session-runtime-store.js` | Singleton global                   | `openKeys[]`, `focusedKeyByPath{}` (foco por workspace), `keyMeta{}` (badges, cwd, título por chave). O limite de painéis (`MAX_OPEN_PANELS = 4`) é aplicado **por workspace**, não globalmente — ver `panelCountFor`/`canOpenMore`. |
+| `workspaces-store.js`      | Singleton global                   | `workspaces[]`, `activePath`, `sessionsByPath{}`                                                                                                                                                                                     |
 
 ### Ações (session store)
 
@@ -203,13 +203,19 @@ derivado de `sessionRuntime.keyMeta`.
 
 `SessionTileGrid.vue` substitui o `<ChatView>` único na área de conteúdo
 principal. Renderiza 1 (tela cheia), 2 (divisão horizontal), 3 (aninhado), ou 4
-(grade 2×2) painéis baseado em `sessionRuntime.openKeys.length`, usando
-`QSplitter` do Quasar para divisórias redimensionáveis.
+(grade 2×2) painéis baseado em `sessionRuntime.visibleKeys(workspacesStore.activePath).length`
+— apenas os painéis do workspace ativo, não a lista `openKeys` do app inteiro —
+usando `QSplitter` do Quasar para divisórias redimensionáveis.
 
-Cada painel tem um `SessionPaneHeader.vue` com duas ações distintas:
-
-- **Fechar** — `runtime.closePanel(key)` (esconde apenas, sessão continua rodando)
-- **Parar** — `runtime.stopAndDispose(key)` (mata o processo)
+Cada painel tem um `SessionPaneHeader.vue` com um único botão de fechar, que
+chama `runtime.closePanel(key)`. Não existe mais uma ação manual separada de
+"Parar" — `closePanel` se comporta condicionalmente: se um turno está em
+execução, apenas esconde o painel (a sessão continua rodando em segundo
+plano); se a sessão está ociosa, também para e descarta a sessão, liberando o
+slot de painel do workspace. `runtime.stopAndDispose(key)` ainda existe como
+uma parada incondicional, mas só é usado quando o usuário exclui a sessão
+subjacente por completo (ver `onDeleteSession` em `MainLayout.vue`), não a
+partir do botão de fechar do painel.
 
 ### Fluxo ao Clicar na Sessão
 
@@ -217,7 +223,7 @@ Cada painel tem um `SessionPaneHeader.vue` com duas ações distintas:
 Usuário clica no item da sessão
   → onSelectSession(session)
     → openOrFocusSession(session.session_id, cwd, session.session_id)
-      → runtime.openPanel(key)        — adiciona a openKeys, define focusedKey
+      → runtime.openPanel(key)        — adiciona a openKeys, define focusedKeyByPath[cwd]
       → store.startSession(cwd, id)   — Bridge: inicia zero acp com session/load
                                         (ou reconecta se já estiver viva)
 ```

@@ -111,7 +111,7 @@ Nenhuma crate de JSON-RPC foi adicionada - `acp.rs` implementa o framing delimit
 ### Arquivos
 
 - `src/services/zero.js` — envolve todos os commands e listeners de eventos do Tauri.
-- `src/stores/zero-store.js` — store Pinia para estado do chat, gerenciamento de sessão, lista de modelos, backends MCP, modo de permissão, estado do plano, e sincronização de sessão.
+- `src/stores/zero-store.js` — store Pinia global: lista de modelos, backends MCP, modo de permissão. O estado de chat por sessão (mensagens, plano, sincronização de sessão) vive na `zero-session-store.js` — ver "Arquitetura da store" abaixo.
 - `src/components/ChatView.vue` — contêiner principal do chat com renderização condicional.
 - `src/components/chat/ChatInput.vue` — input de mensagem com botão anexar, toggle de modo de permissão, dropdown seletor de modelo, checklist de plano inline, indicador de status, e botão cancelar.
 - `src/components/chat/TextMessage.vue` — mensagens de texto (usuário/assistente), renderizadas em markdown.
@@ -153,10 +153,14 @@ As stores Pinia estão divididas em três camadas (ver [ADR 004](../architecture
   sessão: `messages[]`, `currentResponse`, `currentThinking`, `currentPlan`,
   `runInProgress`, listeners (filtrados por `sessionKey`). Getters:
   `workingStatus`, `activePlan`, `editedFiles`.
-- **`session-runtime-store.js`** (orquestrador) — `openKeys` (ordem de exibição,
-  máx 4), `focusedKey`, `keyMeta` (metadata por chave para badges). Actions:
-  `openPanel`, `closePanel` (esconde), `stopAndDispose` (mata processo),
-  `openOrFocusSession` (entry point usado pela UI).
+- **`session-runtime-store.js`** (orquestrador) — `openKeys` (ordem de
+  exibição), `focusedKeyByPath` (foco rastreado por workspace, não uma única
+  chave global), `keyMeta` (metadata por chave para badges). O limite de 4
+  painéis (`MAX_OPEN_PANELS`) é aplicado **por workspace**, não globalmente.
+  Actions: `openPanel`, `closePanel` (esconde enquanto um turno está em
+  execução; para e descarta quando ocioso — não existe mais uma ação manual
+  separada de "Parar"), `stopAndDispose` (parada incondicional, usada ao
+  excluir uma sessão), `openOrFocusSession` (entry point usado pela UI).
 
 `ChatView.vue` cria uma session store para sua prop `sessionKey` e faz
 `provide("zeroStore", store)` para os componentes filhos. `ChatInput.vue` usa a

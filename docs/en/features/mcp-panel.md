@@ -142,7 +142,13 @@ pub struct McpBackendInfo {
 
 ### `editedFiles` getter
 
-The `zero-store.js` Pinia store exposes an `editedFiles` getter that groups `edit_file`/`write_file` tool calls by file path, preserving both file-encounter order and per-file edit order. This is derived purely from `state.messages`, which is reset/rebuilt on session switch, so no manual watcher is needed.
+`editedFiles` is a per-session getter on `zero-session-store.js` (the
+`useZeroSessionStore(key)` factory store), not on the global `zero-store.js` —
+each open panel has its own `editedFiles`, derived purely from that panel's own
+`state.messages`. `McpDrawer.vue` resolves which session's `editedFiles` to
+show via `sessionRuntime.focusedKeyFor(workspacesStore.activePath)` →
+`useZeroSessionStore(key)`, so the drawer always reflects the currently
+focused panel, not a single app-wide session.
 
 Each entry:
 
@@ -196,7 +202,7 @@ The `isEditTool()` utility (from `src/utils/edit-tools.js`) matches:
 - **Diff panel**: Renders each edit as a monospace diff block with removed lines in red and added lines in green, using `getEditStrings` from `edit-tools.js` to extract `old_str`/`new_str` pairs.
 - **Backend cards**: Each card shows the server name, transport type badge (stdio=orange, http=blue), URL (truncated to hostname), and a status icon (spinner while checking, check_circle when OK, error icon on failure, cloud when unknown).
 - **Refresh all**: The header refresh button calls `loadMcpBackends({ force: true })` then `checkAllMcpBackends()`.
-- **Expanded file** resets on session switch (watched via `zeroStore.currentSessionId`).
+- **Expanded file** resets when the focused panel changes (watched via `focusedKey`, i.e. `sessionRuntime.focusedKeyFor(workspacesStore.activePath)` — not `zeroStore.currentSessionId`, which no longer exists).
 
 ## Caching Strategy
 

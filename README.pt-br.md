@@ -20,7 +20,7 @@
   <a href="#documentação">Documentação</a>
 </p>
 
-> **Status:** Alfa — em evolução ativa. Chat principal, arquitetura multi-sessão, painel MCP e gerenciamento de workspaces já estão implementados.
+> **Status:** Alfa — em evolução ativa. Chat principal, arquitetura multi-sessão, painel MCP, terminal integrado e gerenciamento de workspaces já estão implementados.
 
 ---
 
@@ -76,6 +76,12 @@ Ele **não** embute nem modifica o binário do `zero` — usa o protocolo públi
 - Contagem de ferramentas por backend e lista agregada de ferramentas.
 - Faixa de arquivos editados com visualização inline de diffs expansível.
 
+### 🖥️ Terminal Integrado
+
+- Abas de shell reais com PTY, ancoradas em um painel inferior redimensionável — não é um console falso, são shells de login `$SHELL` de verdade, com cores, controle de jobs e programas interativos.
+- Abra/feche abas como abas de navegador; cada workspace mantém seu próprio conjunto de terminais, rodando independentemente em segundo plano quando você troca de workspace.
+- Cite a saída visível (ou seleção) de um terminal diretamente no painel de chat que estiver em foco, como um bloco de código, para mostrar um erro ao agente sem precisar redigitá-lo.
+
 ### ⚡ Controles de Permissão e Segurança
 
 - Requisições de permissão reais repassadas do agente, com as opções exatas que ele oferece.
@@ -103,6 +109,7 @@ Ele **não** embute nem modifica o binário do `zero` — usa o protocolo públi
 - **Peer JSON-RPC feito à mão** sobre `tokio` + `serde_json` para comunicação ACP full-duplex.
 - **Histórico rico local** armazenado em `~/.local/share/zero-desktop/session-history/` para que sessões sejam reproduzidas fielmente.
 - **Stores Pinia por sessão** mantêm várias conversas ativas reativas e independentes.
+- **Shells reais com PTY** (via `portable-pty`) alimentam o painel de terminal integrado, um processo por aba aberta.
 
 ---
 
@@ -139,6 +146,9 @@ pnpm build
 - [Arquitetura (PT-BR)](./docs/pt-br/architecture/index.md)
 - [Linux Installation (EN)](./docs/en/distribution/linux-installation.md)
 - [Instalação no Linux (PT-BR)](./docs/pt-br/distribution/linux-installation.md)
+- [Terminal Panel (EN)](./docs/en/features/terminal-panel.md)
+- [Painel de Terminal (PT-BR)](./docs/pt-br/features/terminal-panel.md)
+- [Todas as docs de features](./docs/README.md#features)
 
 ---
 

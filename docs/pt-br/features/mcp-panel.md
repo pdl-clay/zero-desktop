@@ -124,7 +124,13 @@ O cache usa `thread_local!` com caminho substituível para testes, permitindo qu
 
 ### Getter `editedFiles`
 
-A store Pinia expõe um getter `editedFiles` que agrupa chamadas `edit_file`/`write_file` por caminho de arquivo, preservando a ordem de encontro e a ordem de edição por arquivo. Derivado puramente de `state.messages`.
+`editedFiles` é um getter por sessão em `zero-session-store.js` (a store
+factory `useZeroSessionStore(key)`), não na store global `zero-store.js` —
+cada painel aberto tem seu próprio `editedFiles`, derivado puramente das
+`state.messages` daquele painel. O `McpDrawer.vue` resolve de qual sessão
+mostrar o `editedFiles` via `sessionRuntime.focusedKeyFor(workspacesStore.activePath)`
+→ `useZeroSessionStore(key)`, então o drawer sempre reflete o painel
+atualmente focado, não uma única sessão global do app.
 
 O utilitário `isEditTool()` (de `src/utils/edit-tools.js`) reconhece:
 
@@ -167,7 +173,7 @@ O utilitário `isEditTool()` (de `src/utils/edit-tools.js`) reconhece:
 - **Painel de diff**: Renderiza cada edição como um bloco monoespaçado com linhas removidas em vermelho e adicionadas em verde, usando `getEditStrings` de `edit-tools.js`.
 - **Cards de backend**: Cada card mostra nome do servidor, badge de tipo (stdio=laranja, http=azul), URL (truncada para hostname), e ícone de status.
 - **Atualizar tudo**: O botão de refresh no cabeçalho chama `loadMcpBackends({ force: true })` depois `checkAllMcpBackends()`.
-- **Arquivo expandido** reseta ao trocar de sessão.
+- **Arquivo expandido** reseta quando o painel focado muda (observado via `focusedKey`, ou seja, `sessionRuntime.focusedKeyFor(workspacesStore.activePath)` — não `zeroStore.currentSessionId`, que não existe mais).
 
 ## Estratégia de Cache
 

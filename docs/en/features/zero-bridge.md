@@ -111,7 +111,7 @@ No JSON-RPC crate was added - `acp.rs` hand-rolls the newline-delimited framing 
 ### Files
 
 - `src/services/zero.js` — wraps every Tauri command and event listener.
-- `src/stores/zero-store.js` — Pinia store for chat state, session management, model list, MCP backends, permission mode, plan state, and session sync.
+- `src/stores/zero-store.js` — global Pinia store: model list, MCP backends, permission mode. Per-session chat state (messages, plan, session sync) lives on `zero-session-store.js` instead — see "Store architecture" below.
 - `src/components/ChatView.vue` — main chat container with conditional rendering.
 - `src/components/chat/ChatInput.vue` — message input with attach-file button, permission-mode toggle, model picker dropdown, inline plan checklist, working-status indicator, and cancel button.
 - `src/components/chat/TextMessage.vue` — user/assistant text messages (markdown-rendered).
@@ -154,9 +154,13 @@ The Pinia stores are split into three layers (see [ADR 004](../architecture/deci
   `runInProgress`, listeners (filtered by `sessionKey`). Getters:
   `workingStatus`, `activePlan`, `editedFiles`.
 - **`session-runtime-store.js`** (orchestrator) — `openKeys` (panel display
-  order, max 4), `focusedKey`, `keyMeta` (per-key metadata for badges). Actions:
-  `openPanel`, `closePanel` (hide only), `stopAndDispose` (kill process),
-  `openOrFocusSession` (entry point used by the UI).
+  order), `focusedKeyByPath` (focus tracked per workspace, not a single global
+  key), `keyMeta` (per-key metadata for badges). The 4-panel cap
+  (`MAX_OPEN_PANELS`) is enforced **per workspace**, not globally. Actions:
+  `openPanel`, `closePanel` (hides while a turn is running; stops and disposes
+  when idle — there is no separate manual "Stop" action), `stopAndDispose`
+  (unconditional kill, used when deleting a session), `openOrFocusSession`
+  (entry point used by the UI).
 
 `ChatView.vue` creates a session store for its `sessionKey` prop and
 `provide("zeroStore", store)` to child components. `ChatInput.vue` uses both the

@@ -20,7 +20,7 @@
   <a href="#documentation">Docs</a>
 </p>
 
-> **Status:** Alpha — actively evolving. Core chat, multi-session architecture, MCP panel, and workspace management are already implemented.
+> **Status:** Alpha — actively evolving. Core chat, multi-session architecture, MCP panel, integrated terminal, and workspace management are already implemented.
 
 ---
 
@@ -76,6 +76,12 @@ It does **not** bundle or modify the `zero` binary — it uses zero's public [Ag
 - Tool counts per backend and aggregated tool list.
 - Edited-files strip with expandable inline diff previews.
 
+### 🖥️ Integrated Terminal
+
+- Real PTY-backed shell tabs docked to a resizable bottom panel — not a fake console, actual `$SHELL` login shells with colors, job control, and interactive programs.
+- Open/close tabs like browser tabs; each workspace keeps its own set of terminals, running independently in the background when you switch away.
+- Cite a terminal's visible output (or selection) straight into whichever chat panel is focused, as a fenced code block, to show the agent an error without retyping it.
+
 ### ⚡ Permission & Safety Controls
 
 - Real permission requests forwarded from the agent with the exact options it offers.
@@ -103,6 +109,7 @@ It does **not** bundle or modify the `zero` binary — it uses zero's public [Ag
 - **Hand-rolled JSON-RPC peer** on top of `tokio` + `serde_json` for full ACP duplex communication.
 - **Local rich history** stored at `~/.local/share/zero-desktop/session-history/` so sessions replay faithfully.
 - **Per-session Pinia stores** keep multiple live conversations reactive and independent.
+- **Real PTY-backed shells** (via `portable-pty`) power the integrated terminal panel, one process per open tab.
 
 ---
 
@@ -139,6 +146,9 @@ pnpm build
 - [Arquitetura (PT-BR)](./docs/pt-br/architecture/index.md)
 - [Linux Installation (EN)](./docs/en/distribution/linux-installation.md)
 - [Instalação no Linux (PT-BR)](./docs/pt-br/distribution/linux-installation.md)
+- [Terminal Panel (EN)](./docs/en/features/terminal-panel.md)
+- [Painel de Terminal (PT-BR)](./docs/pt-br/features/terminal-panel.md)
+- [All feature docs](./docs/README.md#features)
 
 ---
 

@@ -108,3 +108,17 @@ leitura-modificação-escrita concorrentes.
 - `ChatInput.vue` chama `sessionStore.switchModel()` (restart por sessão).
 - A lista de sessões mostra badges ao vivo via `sessionRuntime.keyMeta`.
 - Comando `list_live_sessions` adicionado para reconciliação de estado.
+
+> **Atualização:** a decisão nº 3 acima ("Fechar um painel NÃO para a sessão:
+> só uma ação explícita de 'Stop' mata o processo") e os "botões distintos de
+> Close e Stop" descritos na Arquitetura foram simplificados depois:
+> `SessionPaneHeader.vue` agora tem um único botão de fechar. `closePanel()`
+> se comporta condicionalmente — só esconde o painel enquanto um turno está
+> em andamento, mas também para e descarta a sessão quando ela está ociosa,
+> já que com um limite de painéis por workspace e sem uma ação manual
+> separada de "parar", uma sessão ociosa deixada rodando desperdiçaria um
+> slot que o usuário não teria como recuperar. `stopAndDispose()` (kill
+> incondicional) ainda existe, mas só é usado quando o usuário deleta a
+> sessão por completo, não pelo botão de fechar do próprio painel. Veja
+> `docs/features/session-system.md` para o comportamento atual; este ADR
+> permanece como registro histórico da decisão original.

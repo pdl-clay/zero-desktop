@@ -164,15 +164,15 @@ The plan checklist is rendered:
 
 ## State management
 
-The `zero-store.js` Pinia store maintains:
+Since multi-session parallel chat (see [ADR 004](../architecture/decisions/004-multi-session-parallel.md)), this per-conversation state lives on the **per-session** `zero-session-store.js` (the `useZeroSessionStore(key)` factory store) — one instance per open panel — not on the global `zero-store.js`:
 
 - `messages[]` — typed message list
 - `currentResponse` — streaming text buffer
 - `currentThinking` — streaming thinking buffer
 - `currentPlan` — the agent's plan entries (replaced whole on each `plan_update`)
 - `workingStatus` getter — returns `'thinking'`, `{ type: 'tool', toolName }`, `'writing'`, `'sending'`, or `null`. Used by `ChatInput.vue`'s status bar.
-- `permissionMode` — `'ask'` (default) or `'auto_allow'` (persisted in `localStorage`)
-- `activeModel` / `availableModels` — for the model picker
+
+The global `zero-store.js` singleton only holds app-wide state: `permissionMode` — `'ask'` (default) or `'auto_allow'` (persisted in `localStorage`) — and `activeModel` / `availableModels`, which seed each session's own picker.
 
 Streaming is finalized into permanent messages when:
 

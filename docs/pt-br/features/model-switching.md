@@ -70,15 +70,15 @@ Comando Tauri: list_zero_models() → AvailableModels
 ### `switch_zero_model` (`bridge.rs` → `lib.rs`)
 
 ```
-Comando Tauri: switch_zero_model(model: String) → ()
+Comando Tauri: switch_zero_model(key: String, model: String) → ()
 ```
 
 **Etapas:**
 
 1. Resolve o nome do provedor ativo via `active_provider_entry()`.
-2. Executa `zero providers add <provider> --name <provider> --model <model> --set-active` — atualiza o modelo na config do zero.
-3. Chama `bridge.cancel()` para matar o processo `zero acp` vivo. O session id e histórico são preservados.
-4. No próximo `send()`, o bridge respawna o processo e re-snapshota o modelo no `session-models.json` — o novo modelo entra em vigor no próximo turno.
+2. Executa `zero providers add <provider> --name <provider> --model <model> --set-active` — atualiza o modelo na config do zero. Essa parte é global — muda o arquivo de config que todo processo `zero` lê.
+3. Chama `bridge.cancel(key)` para matar **apenas** o processo `zero acp` vivo da sessão identificada por `key` (ver [ADR 004](../architecture/decisions/004-multi-session-parallel.md), decisão nº 6). O session id e histórico são preservados, e qualquer outra sessão aberta continua rodando com o modelo que já tinha snapshotado.
+4. No próximo `send()` para essa mesma `key`, o bridge respawna o processo e re-snapshota o modelo no `session-models.json` — o novo modelo entra em vigor no próximo turno dessa sessão.
 
 **Por que matar o processo?** O ACP não tem método para trocar de modelo no meio da sessão. A única forma de um processo `zero acp` em execução captar uma mudança de config é reiniciá-lo. Matar e respawnar via `session/load` é efetivamente uma reconexão de sessão com o novo modelo.
 
@@ -110,7 +110,8 @@ Isso é armazenado em `~/.local/share/zero-desktop/session-models.json` e sobrep
 | Ação                             | Descrição                                                                              |
 | -------------------------------- | -------------------------------------------------------------------------------------- |
 | `loadAvailableModels({ force })` | Chama `listZeroModels()`. Cache no `_modelsLoaded`; passe `force: true` para rebuscar. |
-| `switchModel(model)`             | Guarda contra no-op, run em andamento, e trocas duplicadas. Chama `switchZeroModel`.   |
+
+O próprio `switchModel(model)` **não** é uma ação da `zero-store.js` — desde o chat paralelo multi-sessão (ADR 004), ele vive na store por sessão `zero-session-store.js` (`useZeroSessionStore(key)`). Ele guarda contra no-op (mesmo modelo) e run em andamento, chama `switchZeroModel(key, model)` para reiniciar apenas o processo daquela sessão, atualiza o `activeModel` próprio da sessão, e também atualiza o `activeModel` da store global para que qualquer painel ainda não conectado adote o novo padrão na primeira conexão.
 
 ### `ChatInput.vue` — Seletor de Modelo
 

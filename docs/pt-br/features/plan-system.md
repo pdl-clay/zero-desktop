@@ -85,7 +85,11 @@ O bridge não interpreta nem modifica as entradas do plano; apenas as repassa. O
 
 ## Frontend
 
-### `zero-store.js` — Estado do Plano
+### Estado do Plano
+
+`currentPlan` vive na store **por sessão** `zero-session-store.js` (a store
+factory `useZeroSessionStore(key)`), não na `zero-store.js` global — cada
+painel aberto acompanha o plano do seu próprio agente de forma independente.
 
 | Estado        | Tipo    | Descrição                                                      |
 | ------------- | ------- | -------------------------------------------------------------- |

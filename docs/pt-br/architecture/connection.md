@@ -108,7 +108,7 @@ Quando o locator não encontra o binário:
 - **Um processo `zero acp` por sessão**, não um único processo compartilhado pelo app - o zero não tem como cancelar um turno específico em andamento, então cancelamento é "matar o processo", e isso não deveria derrubar outras conversas abertas.
 - **Não embutimos o binário do zero** no pacote do zero-desktop, pra preservar o ciclo de vida independente do zero.
 - **Não modificamos o zero**; só usamos suas interfaces públicas.
-- **Workspace único no alpha**: o alpha começa com um workspace. Suporte a múltiplos workspaces vem depois.
+- **Múltiplos workspaces, múltiplas sessões**: o zero-desktop agora suporta vários workspaces abertos ao mesmo tempo, cada um com até 4 painéis de sessão simultâneos (ver [ADR 004](./decisions/004-multi-session-parallel.md)); o backend não impõe nenhum limite global de processos.
 
 ## 7. Referências
 

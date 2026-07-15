@@ -160,7 +160,7 @@ Returns a `FileAttachment` object (`{ mimeType, data, name }`).
    - **Image**: thumbnail using `base64ToObjectUrl()` from `src/utils/image.js` — converts base64 to a `blob:` URL to avoid bloating Vue's reactive state and DOM attributes with multi-MB base64 strings.
    - **Text/code**: file chip showing the icon (from `getFileIcon()` in `src/utils/file.js`), file name, and MIME type.
 5. A remove button (✕) lets the user detach the file before sending.
-6. On send, the attachment is passed to `sendZeroMessage(content, file)`.
+6. On send, the attachment is passed to `sendZeroMessage(key, content, file)` — `key` routes it to the correct session's process.
 
 ### File preview utilities
 
@@ -182,7 +182,7 @@ Returns a `FileAttachment` object (`{ mimeType, data, name }`).
 
 ### History replay
 
-When replaying a session from history, `buildMessagesFromHistory` in `zero-store.js` recognizes the `file` key on user `message` events and passes it to `addUserMessage(content, file)`, which stores it on the message object. `TextMessage.vue` renders the file preview (image or file chip) above the message text, same as live messages.
+When replaying a session from history, `buildMessagesFromHistory` — a per-session method on `zero-session-store.js` (each open panel replays its own history independently) — recognizes the `file` key on user `message` events and passes it to `addUserMessage(content, file)`, which stores it on the message object. `TextMessage.vue` renders the file preview (image or file chip) above the message text, same as live messages.
 
 ## Limitations
 

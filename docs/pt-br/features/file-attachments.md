@@ -140,7 +140,7 @@ export async function readFileAttachment(path) {
    - **Imagem**: miniatura usando `base64ToObjectUrl()` de `src/utils/image.js` — converte base64 para URL `blob:` para evitar inchar o estado reativo do Vue.
    - **Texto/código**: chip de arquivo mostrando ícone (de `getFileIcon()` em `src/utils/file.js`), nome do arquivo e MIME type.
 5. Um botão remover (✕) permite desanexar o arquivo antes de enviar.
-6. Ao enviar, o anexo é passado para `sendZeroMessage(content, file)`.
+6. Ao enviar, o anexo é passado para `sendZeroMessage(key, content, file)` — `key` roteia para o processo da sessão correta.
 
 ### Utilitários de prévia
 
@@ -162,7 +162,7 @@ export async function readFileAttachment(path) {
 
 ### Reprodução de histórico
 
-Ao reproduzir uma sessão do histórico, `buildMessagesFromHistory` no `zero-store.js` reconhece a chave `file` em eventos `message` de usuário e a passa para `addUserMessage(content, file)`. `TextMessage.vue` renderiza a prévia do arquivo acima do texto da mensagem, igual às mensagens ao vivo.
+Ao reproduzir uma sessão do histórico, `buildMessagesFromHistory` — um método por sessão em `zero-session-store.js` (cada painel aberto reproduz seu próprio histórico de forma independente) — reconhece a chave `file` em eventos `message` de usuário e a passa para `addUserMessage(content, file)`. `TextMessage.vue` renderiza a prévia do arquivo acima do texto da mensagem, igual às mensagens ao vivo.
 
 ## Limitações
 
