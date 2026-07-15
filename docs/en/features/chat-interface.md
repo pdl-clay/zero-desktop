@@ -13,7 +13,7 @@ All messages share common fields and add type-specific fields:
 ```js
 {
   id: string,          // unique identifier
-  type: 'text' | 'thinking' | 'tool_call' | 'permission_request',
+  type: 'text' | 'thinking' | 'tool_call' | 'permission_request' | 'permission_decision' | 'error',
   timestamp: number,
   // type-specific fields below
 }
@@ -22,10 +22,15 @@ All messages share common fields and add type-specific fields:
 ### `text` messages
 
 ```js
-{ type: 'text', role: 'user' | 'assistant' | 'system', content: string }
+{
+  type: 'text',
+  role: 'user' | 'assistant' | 'system',
+  content: string,
+  file?: { mimeType: string, data: string, name: string }  // user messages only
+}
 ```
 
-Rendered by `TextMessage.vue` using Quasar's `<q-chat-message>` with role-based colors.
+Rendered by `TextMessage.vue` using Quasar's `<q-chat-message>` with role-based colors. User messages with an attached file show the file preview (image thumbnail or file chip) above the text.
 
 ### `thinking` messages
 
@@ -38,15 +43,6 @@ Rendered by `ThinkingBlock.vue` in two modes:
 - **Streaming** (`streaming=true`): A thin amber-tinted bar with a spinner and "Thinking..." label. Not expandable — the content is still arriving. This appears at the bottom of the message list alongside the streaming text bubble.
 - **Finalized** (`streaming=false`): A collapsible `q-expansion-item` with a check icon and "Thinking" label. Click to reveal the full reasoning text in italic.
 
-The `WorkingIndicator.vue` component (a slim status bar at the top of the chat) also displays the current activity state, providing a second visual cue that the agent is working:
-
-| State                 | Color  | Label                   |
-| --------------------- | ------ | ----------------------- |
-| `thinking`            | Amber  | "Thinking..."           |
-| `tool` (running tool) | Blue   | "running {toolName}..." |
-| `writing`             | Green  | "Writing response..."   |
-| (idle)                | Hidden | —                       |
-
 ### `tool_call` messages
 
 ```js
@@ -55,59 +51,116 @@ The `WorkingIndicator.vue` component (a slim status bar at the top of the chat) 
   toolName: string,
   toolUseId: string,
   input: object,
-  status: 'running' | 'completed',
+  status: 'running' | 'completed' | 'error',
   result: string | null,
 }
 ```
 
-Rendered by `ToolCallMessage.vue` as a card with two visual states:
+Rendered by `ToolCallMessage.vue` as a card with states:
 
 - **running**: spinner + tool icon + tool name + "running..." label. Input params shown in a tooltip.
 - **completed**: check icon + tool name + "completed" label. Expandable result area with a "Show more/Less" toggle (truncated at 25 lines) and a copy-to-clipboard button.
+- **error**: error icon + tool name + "error" label. Result shown in red.
 
-Tool calls are updated inline: when a `tool_result` event arrives, the store finds the matching `tool_call` by `toolUseId` and sets `status = 'completed'` and `result`.
+Special rendering for known tools:
+
+- **`edit_file` / `write_file`**: Shows a unified diff view (oldStr in red, newStr in green) with monospace font.
+- **`update_plan`**: Not rendered as a card at all — the store captures the plan entries separately and they appear pinned above the chat input via `activePlan`.
+
+Tool calls are updated inline: when a `tool_result` event arrives, the store finds the matching `tool_call` by `toolUseId` and sets `status` and `result`.
 
 ### `permission_request` messages
 
 ```js
 {
   type: 'permission_request',
-  permissionId: string,
+  requestId: string,
   toolName: string,
-  proposedCommand: string,
+  reason: string,
+  options: Array<{ optionId: string, name: string, kind: string }>,
+  answerable: boolean,
   status: 'pending' | 'approved' | 'denied',
 }
 ```
 
-Rendered by `PermissionRequest.vue` as a warning-bordered card showing the tool name and proposed command in monospace. When `status === 'pending'`, it displays Approve (green) and Deny (red) buttons. After a decision, the icon and colors update to reflect the outcome.
+Two rendering paths depending on `answerable`:
+
+- **Live (answerable=true)**: Rendered by `PendingPermissionPanel.vue` pinned above the chat input. Shows the tool name, reason, and whatever options ACP actually offered (e.g. "Allow", "Allow for session", "Reject" — not a fixed pair). The user clicks an option and `respondToPermission` delivers the JSON-RPC reply.
+- **History (answerable=false)**: Rendered inline in the message list as a read-only card by `PendingPermissionPanel.vue` or as a badge by `PermissionDecisionBadge.vue`. Shows the outcome if a matching `permission_decision` exists, otherwise shows "expired".
+
+### `permission_decision` messages
+
+```js
+{
+  type: 'permission_decision',
+  toolName: string,
+  action: 'allow' | 'deny',
+  reason: string,
+}
+```
+
+Rendered by `PermissionDecisionBadge.vue` as a compact inline badge. These come from informational auto-decisions the model makes without asking, or from the user's decision being persisted and then replayed from history.
+
+### `error` messages
+
+```js
+{ type: 'error', content: string }
+```
+
+Rendered by `ErrorMessage.vue` as an inline error bubble with a warning icon. Typically shown when the zero process crashes unexpectedly.
 
 ## Component tree
 
 ```
 ChatView.vue
-├── WorkingIndicator.vue     (global status bar: thinking/tool/writing)
-├── TextMessage.vue          (type: text)
-├── ThinkingBlock.vue        (type: thinking — compact bar or expandable)
-├── ToolCallMessage.vue      (type: tool_call — running/completed)
-├── PermissionRequest.vue    (type: permission_request)
-├── ThinkingBlock            (streaming — currentThinking, thin bar)
-└── q-chat-message           (streaming — currentResponse)
+├── WorkingIndicator.vue          (global status bar — not used directly; status is now inline in ChatInput)
+├── TextMessage.vue               (type: text)
+├── ThinkingBlock.vue             (type: thinking — compact bar or expandable)
+├── ToolCallMessage.vue           (type: tool_call — running/completed/error with diff view)
+├── PendingPermissionPanel.vue    (type: permission_request — answerable or read-only)
+├── PermissionDecisionBadge.vue   (type: permission_decision — compact badge)
+├── ErrorMessage.vue              (type: error)
+└── q-chat-message                (streaming — currentResponse)
+```
+
+Plus, above/below the message list:
+
+```
+ChatView.vue / IndexPage.vue
+├── PendingPermissionPanel.vue    (pinned above input while a live permission is pending)
+└── ChatInput.vue
+    ├── Plan checklist             (inline: pinned above input while plan is active)
+    ├── Working status bar         (colored bar with thinking/tool/writing/sending status)
+    ├── File attachment preview    (image thumbnail or file chip with remove button)
+    ├── Attach button              (native file picker → read_file_attachment)
+    ├── Permission mode toggle     (ask / auto_allow)
+    ├── Model picker               (dropdown with search, recent models, active indicator)
+    └── Send / Cancel button       (arrow_upward when idle, pause when running)
 ```
 
 All components live under `src/components/chat/`.
 
 ## Permission flow
 
-1. Zero emits a `permission_request` event via stream-json.
-2. Rust bridge receives it and emits `zero:event` to the frontend.
-3. The store creates a `permission_request` message with `status: 'pending'`.
-4. `PermissionRequest.vue` renders the card with Approve/Deny buttons.
-5. User clicks a button → store calls `approvePermission(id)` or `denyPermission(id)`.
-6. Store updates `status` to `'approved'` or `'denied'` and invokes the Tauri command `send_permission_decision`.
-7. Rust bridge receives the decision through an mpsc channel and writes it as a `permission_decision` JSONL event to zero's persistent stdin.
-8. Zero processes the decision and continues or aborts the tool call.
+1. The agent sends a `session/request_permission` JSON-RPC request via ACP.
+2. The Rust bridge translates it, assigns a `correlation_id`, persists the request to the local history, and emits `zero:permission-request` to the frontend.
+3. The store creates a `permission_request` message with `status: 'pending'` and `answerable: true`.
+4. `PendingPermissionPanel.vue` renders it pinned above the chat input with the options ACP offered.
+5. User clicks an option → store calls `respondToPermission(requestId, optionId)`.
+6. The store updates the message's `status` and `chosenOptionId`, and invokes the Tauri command.
+7. The Rust bridge looks up the pending request by `correlation_id`, persists a `permission_decision` to the local history, and sends the JSON-RPC reply to the agent.
+8. The agent receives the decision and continues or aborts the tool call.
 
-The stdin channel is kept open by a background tokio task spawned alongside each `zero exec` process. When the session is stopped or a new message is sent, the channel sender is dropped, which closes stdin.
+In `auto_allow` mode, the store auto-selects the first `"allow"` option immediately on receiving the request — the user never sees the prompt.
+
+## Plan system
+
+The `update_plan` tool call is treated specially: instead of rendering a tool-call card, the store updates `currentPlan` with the entries from the `plan_update` event. The `activePlan` getter returns `null` when all items are completed, auto-hiding the checklist.
+
+The plan checklist is rendered:
+
+- **Inline in `ChatInput.vue`**: Pinned above the textarea while active. Shows each item with a status icon (pending → `radio_button_unchecked`, in_progress → `hourglass_empty`, completed → `check_circle` with strikethrough text).
+- **In `PlanPanel.vue`**: Standalone panel component, used in alternative layouts.
 
 ## State management
 
@@ -116,16 +169,30 @@ The `zero-store.js` Pinia store maintains:
 - `messages[]` — typed message list
 - `currentResponse` — streaming text buffer
 - `currentThinking` — streaming thinking buffer
-- `workingStatus` getter — returns `'thinking'`, `{ type: 'tool', toolName }`, `'writing'`, or `null`. Used by `WorkingIndicator.vue` to display the current activity.
+- `currentPlan` — the agent's plan entries (replaced whole on each `plan_update`)
+- `workingStatus` getter — returns `'thinking'`, `{ type: 'tool', toolName }`, `'writing'`, `'sending'`, or `null`. Used by `ChatInput.vue`'s status bar.
+- `permissionMode` — `'ask'` (default) or `'auto_allow'` (persisted in `localStorage`)
+- `activeModel` / `availableModels` — for the model picker
 
 Streaming is finalized into permanent messages when:
 
-- Thinking: the next non-`reasoning` event arrives (`text`, `tool_call`, `permission_request`, `final`, `run_end`, `error`).
-- Text: `final` or `run_end` events arrive.
+- Thinking: the next non-`reasoning` event arrives (`text`, `tool_call`, `permission_request`, `run_end`, `error`).
+- Text: `run_end` event arrives (or process exits).
+
+## File attachments
+
+The chat input includes an attach button that opens the native file dialog filtered to supported extensions (images: png/jpg/gif/webp; text/code: txt, md, csv, json, yaml, xml, html, css, js, ts, jsx, tsx, py, go, rs, java, kt, swift, c, cpp, rb, php, sh, sql, dockerfile).
+
+After selection:
+
+1. `readFileAttachment(path)` is called on the Rust side, which reads the file, validates size (max 10 MB), detects image vs. text by extension, and returns it base64-encoded.
+2. The frontend renders a preview: image thumbnail for images, file chip (icon + name + MIME type) for text/code.
+3. On send, the attachment is passed alongside the message content to `send_zero_message`.
+4. The bridge builds ACP prompt blocks: images become `{"type":"image","mimeType":...,"data":...}`, text files become `{"type":"text","text":"<attached file name=...>\n...\n</attached file>"}`.
 
 ## i18n
 
-New chat translation keys added in `src/i18n/`:
+Chat translation keys in `src/i18n/`:
 
 | Key                       | pt-BR                  | en-US               |
 | ------------------------- | ---------------------- | ------------------- |
@@ -134,9 +201,21 @@ New chat translation keys added in `src/i18n/`:
 | `chat.toolRunning`        | em execução...         | running...          |
 | `chat.toolCompleted`      | concluído              | completed           |
 | `chat.writing`            | Escrevendo resposta... | Writing response... |
+| `chat.sending`            | Enviando...            | Sending...          |
 | `chat.showMore`           | Mostrar mais           | Show more           |
 | `chat.showLess`           | Mostrar menos          | Show less           |
 | `chat.copy`               | Copiar                 | Copy                |
 | `chat.permissionRequired` | Permissão necessária   | Permission required |
 | `chat.approve`            | Aprovar                | Approve             |
 | `chat.deny`               | Recusar                | Deny                |
+| `chat.cancelRun`          | Cancelar execução      | Cancel run          |
+| `chat.attachFile`         | Anexar arquivo         | Attach file         |
+| `chat.removeAttachment`   | Remover anexo          | Remove attachment   |
+| `chat.modelLabel`         | Modelo                 | Model               |
+| `chat.switchModel`        | Trocar modelo          | Switch model        |
+| `chat.searchModel`        | Buscar modelo...       | Search model...     |
+| `chat.recentModels`       | Recentes               | Recent              |
+| `chat.loadingModels`      | Carregando modelos...  | Loading models...   |
+| `chat.noModelsMatch`      | Nenhum modelo encontrado | No models match   |
+| `chat.autoAllow`          | Auto                    | Auto                |
+| `chat.ask`                | Perguntar              | Ask                 |

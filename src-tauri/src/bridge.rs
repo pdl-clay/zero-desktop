@@ -166,6 +166,10 @@ fn translate_session_update(params: &serde_json::Value) -> Option<OutputEvent> {
                 }),
             ))
         }
+        "plan" => {
+            let entries = update.get("entries").cloned().unwrap_or(serde_json::json!([]));
+            Some(OutputEvent::new("plan_update", serde_json::json!({ "entries": entries })))
+        }
         _ => None,
     }
 }
@@ -1111,8 +1115,27 @@ mod tests {
     }
 
     #[test]
+    fn test_translate_plan_update() {
+        let params = serde_json::json!({
+            "update": {
+                "sessionUpdate": "plan",
+                "entries": [
+                    { "content": "Step one", "status": "in_progress", "priority": 0 },
+                    { "content": "Step two", "status": "pending", "priority": 1 }
+                ]
+            }
+        });
+        let event = translate_session_update(&params).unwrap();
+        assert_eq!(event.event_type, "plan_update");
+        let entries = event.payload["entries"].as_array().unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0]["content"], "Step one");
+        assert_eq!(entries[0]["status"], "in_progress");
+    }
+
+    #[test]
     fn test_translate_unknown_update_kind_ignored() {
-        let params = serde_json::json!({ "update": { "sessionUpdate": "plan" } });
+        let params = serde_json::json!({ "update": { "sessionUpdate": "totally_unknown_kind" } });
         assert!(translate_session_update(&params).is_none());
     }
 

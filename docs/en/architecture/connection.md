@@ -12,8 +12,11 @@ Communication uses **`zero acp`** - zero serving the [Agent Client Protocol](htt
 ┌─────────────────────────────────────┐
 │         Frontend Quasar (Vue)        │
 │  - Chat UI                           │
-│  - Execution history                 │
+│  - Model picker                      │
+│  - File attachments                  │
 │  - Permission prompts (real ones)    │
+│  - Plan panel (pinned checklist)     │
+│  - MCP drawer (backends + tools)     │
 └─────────────┬───────────────────────┘
               │ Tauri commands / events
 ┌─────────────▼───────────────────────┐
@@ -22,6 +25,7 @@ Communication uses **`zero acp`** - zero serving the [Agent Client Protocol](htt
 │  - acp (JSON-RPC 2.0 peer)           │
 │  - bridge (ZeroBridge: session       │
 │    lifecycle + event translation)    │
+│  - mcp_cache (persistent MCP status) │
 └─────────────┬───────────────────────┘
               │ stdin / stdout / stderr (JSON-RPC, newline-delimited)
 ┌─────────────▼───────────────────────┐
@@ -46,20 +50,36 @@ A minimal, hand-rolled JSON-RPC 2.0 "peer" (not a client-only or server-only imp
 Owns **one `zero acp` process per active session** (not shared across sessions/workspaces - `zero` has no `session/cancel` method, so interrupting a turn means killing the process, and a shared process would take every other open conversation down with it). Responsibilities:
 
 - Spawns `zero acp`, completes the `initialize` handshake, and opens a session (`session/new`, or `session/load` when resuming).
-- Runs the one task that reads the process's stdout, translating `session/update` notifications into the same `{schemaVersion, type, ...payload}` shape the app already renders (`text`, `reasoning`, `tool_call`, `tool_result`), and forwarding `session/request_permission` as a distinct, answerable event.
+- Runs the one task that reads the process's stdout, translating `session/update` notifications into the same `{schemaVersion, type, ...payload}` shape the app already renders (`text`, `reasoning`, `tool_call`, `tool_result`, `plan_update`), and forwarding `session/request_permission` as a distinct, answerable event.
 - Writes a copy of every translated event to a local history file (see 2.4) as it happens, since `zero`'s own on-disk session log records far less in ACP mode than it used to in exec mode (verified directly: only `message` entries, no tool calls/reasoning/permission activity).
 - Respawns the process and reattaches via `session/load` if it was killed (cancel, or a crash) and a new message comes in.
+- Derives and persists session titles from the first user message, and snapshots the active model per session, since ACP reports neither (zero's own title for ACP-created sessions is a generic "ACP session" and `modelId` comes back empty).
 
-### 2.4 Local session history
+### 2.4 `mcp_cache` - MCP status cache
+
+Persists the last-known health-check status for each MCP backend to `~/.local/share/zero-desktop/mcp-status-cache.json`. This allows the MCP drawer to render immediately with cached statuses on first open, before any live check completes. The cache is updated by `check_mcp_backend` and loaded by `list_mcp_backends` (which overlays cached data onto the config snapshot), `check_mcp_backend_cached` (fast path: return cache if present, live-check otherwise), and `load_mcp_status_cache` (raw cache read for the frontend).
+
+### 2.5 Local session history
 
 zero already indexes sessions (`zero sessions list --json`) and writes its own `~/.local/share/zero/sessions/<id>/events.jsonl`, but in ACP mode that file only contains `message` entries. So zero-desktop keeps its **own** richer log per session at `<app_data_dir>/zero-desktop/session-history/<sessionId>.jsonl`, written by the bridge alongside forwarding events to the frontend. `load_session_history` prefers this file when present, falling back to zero's own `events.jsonl` for sessions created before this existed (or created outside zero-desktop entirely).
 
+### 2.6 Additional persisted state
+
+zero-desktop maintains several small JSON files under `<app_data_dir>/zero-desktop/` for data that ACP does not surface:
+
+| File | Purpose |
+|---|---|
+| `session-history/<sessionId>.jsonl` | Rich per-session log (messages, tool calls, reasoning, permissions) |
+| `session-titles.json` | `{ sessionId: title }` — auto-derived from first message or user-renamed |
+| `session-models.json` | `{ sessionId: modelId }` — which model was active when the session was created |
+| `mcp-status-cache.json` | Last-known health status for each MCP backend |
+
 ## 3. Conversation Flow
 
-1. User types a message in the frontend.
+1. User types a message (optionally with a file attachment) in the frontend.
 2. Frontend calls the Tauri command `send_zero_message`.
-3. `ZeroBridge` sends a `session/prompt` request over the peer for the current session and returns immediately - the request only resolves once the whole turn ends, so it's awaited in a background task rather than blocking the command.
-4. The stdout reader task translates each `session/update` notification into a `zero:event`, streaming text/reasoning/tool-call/tool-result to the frontend as it happens.
+3. `ZeroBridge` persists the user's message to the local history, then sends a `session/prompt` request over the peer for the current session and returns immediately - the request only resolves once the whole turn ends, so it's awaited in a background task rather than blocking the command.
+4. The stdout reader task translates each `session/update` notification into a `zero:event`, streaming text/reasoning/tool-call/tool-result/plan-update to the frontend as it happens.
 5. If the agent needs a permission it can't auto-decide, it sends a real `session/request_permission` request. The bridge surfaces this as `zero:permission-request` and holds the request open.
 6. The frontend shows the options `zero` actually offered (not a fixed approve/deny - ACP can offer things like "allow", "allow for session", "reject"). The user's choice goes back via `respond_to_permission`, which the bridge delivers as the JSON-RPC reply to the still-open request - the agent genuinely receives it and continues (or stops) accordingly.
 7. Once `session/prompt` resolves, the bridge emits a `run_end`-shaped event and refreshes the session list.
@@ -68,7 +88,8 @@ zero already indexes sessions (`zero sessions list --json`) and writes its own `
 
 - zero indexes every session (`zero sessions list --json`), regardless of transport.
 - `session/load` reattaches to a session by id (the ACP equivalent of `--resume`), used both when explicitly reopening an old session and when the bridge silently respawns after a cancel.
-- zero-desktop's own local history file (2.4) is what makes reopening a session show rich tool-call/reasoning/permission cards, since zero's own ACP-mode log doesn't retain that detail.
+- zero-desktop's own local history file (2.5) is what makes reopening a session show rich tool-call/reasoning/permission cards, since zero's own ACP-mode log doesn't retain that detail.
+- The session list is periodically synced (every 3s) while a session is open, so new events from external changes (e.g. another zero-desktop instance) appear without a manual refresh.
 
 ## 5. zero Installation
 

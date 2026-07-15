@@ -4,14 +4,15 @@ Esta seção reúne as decisões e o design de alto nível do **zero-desktop**.
 
 ## Índice
 
-- [`connection.md`](./connection.md) — como o GUI se conecta ao agente zero.
+- [`connection.md`](./connection.md) — como o GUI se conecta ao agente zero via ACP.
 - [`update-model.md`](./update-model.md) — modelo de atualização separado do zero CLI.
 - [`decisions/`](./decisions/) — registros de decisões arquiteturais (ADRs).
 
 ## Decisões Registradas
 
-1. [Conexão via Stream-JSON em vez de MCP ou HTTP](./decisions/001-connection-via-stream-json.md)
+1. [Conexão via Stream-JSON em vez de MCP ou HTTP](./decisions/001-connection-via-stream-json.md) — **substituído pelo ADR 003**
 2. [Distribuição no Linux via AppImage + Script de Instalação](./decisions/002-linux-appimage-plus-install-script.md)
+3. [Migrar o Backbone de Conexão de `zero exec` para `zero acp`](./decisions/003-migrate-to-acp.md)
 
 ## Distribuição
 
@@ -20,6 +21,13 @@ Esta seção reúne as decisões e o design de alto nível do **zero-desktop**.
 ## Funcionalidades
 
 - [zero-bridge: Conexão com o zero CLI](../features/zero-bridge.md)
+- [Sistema de Sessões](../features/session-system.md)
+- [Sistema de Workspaces](../features/workspace-system.md)
+- [Interface de Chat](../features/chat-interface.md)
+- [Painel MCP](../features/mcp-panel.md)
+- [Anexos de Arquivo](../features/file-attachments.md)
+- [Troca de Modelo](../features/model-switching.md)
+- [Sistema de Plano](../features/plan-system.md)
 
 ## Convenção
 

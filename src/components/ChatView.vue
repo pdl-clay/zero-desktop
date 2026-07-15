@@ -110,6 +110,10 @@
       />
     </div>
 
+    <div class="chat-view__right" v-if="zeroStore.activePlan">
+      <PlanPanel :plan="zeroStore.activePlan" />
+    </div>
+
     <div :class="['chat-input-bar q-pa-sm', $q.dark.isActive ? 'chat-input-bar--dark' : '']">
       <PendingPermissionPanel v-if="pendingPermission" :request="pendingPermission" />
       <ChatInput
@@ -118,7 +122,6 @@
         :disabled="!canSend"
         :loading="zeroStore.runInProgress"
         :working-status="zeroStore.workingStatus"
-        :plan="zeroStore.activePlan"
         @send="onSend"
         @cancel="zeroStore.cancelRun()"
         @focus="$emit('focus-input')"
@@ -141,6 +144,7 @@ import PendingPermissionPanel from "@/components/chat/PendingPermissionPanel.vue
 import ErrorMessage from "@/components/chat/ErrorMessage.vue";
 import WorkingIndicator from "@/components/chat/WorkingIndicator.vue";
 import ChatInput from "@/components/chat/ChatInput.vue";
+import PlanPanel from "@/components/chat/PlanPanel.vue";
 
 function permissionDecisionBadgeFrom(request) {
   // A recorded decision (status set from a live answer or a replayed
@@ -344,6 +348,19 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
   }
   100% {
     background-position: -200% 0;
+  }
+}
+
+.chat-view__right {
+  width: 260px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--chat-card-border, rgba(128, 128, 128, 0.18));
+  background: rgba(128, 128, 128, 0.04);
+}
+
+@media (max-width: 1024px) {
+  .chat-view__right {
+    display: none;
   }
 }
 </style>

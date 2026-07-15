@@ -560,6 +560,12 @@ export const useZeroStore = defineStore("zero", {
           this.addPermissionDecision(event);
           break;
 
+        case "plan_update":
+          if (Array.isArray(event.entries)) {
+            this.currentPlan = event.entries;
+          }
+          break;
+
         case "run_end":
           this.finalizeThinking();
           if (this.currentResponse) {

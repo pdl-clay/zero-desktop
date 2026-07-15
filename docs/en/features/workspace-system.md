@@ -102,11 +102,11 @@ watch(activePath)
 The `startSession` action:
 
 1. Clears messages from the previous workspace.
-2. Calls `setupListeners()` to attach `zero:event` and `zero:stderr` listeners.
-3. Calls the Tauri command `start_zero_session(cwd)` which tells the Rust bridge the workspace directory.
+2. Calls `setupListeners()` to attach `zero:event`, `zero:stderr`, `zero:process-exited`, and `zero:permission-request` listeners.
+3. Calls the Tauri command `start_zero_session(cwd)` which tells the Rust bridge the workspace directory and spawns `zero acp`.
 4. Sets `isConnected = true`.
 
-The first message sent after selection causes the Rust bridge to spawn `zero exec --cwd <path>`, and subsequent messages use `--resume <sessionId>` for the same session.
+The bridge spawns a new `zero acp` process with `session/new` in that workspace directory. The session id is captured from the response and used for subsequent turns.
 
 ## Rust Backend
 
@@ -114,26 +114,30 @@ The first message sent after selection causes the Rust bridge to spawn `zero exe
 
 | Command                                | File        | Description                                                       |
 | -------------------------------------- | ----------- | ----------------------------------------------------------------- |
-| `locate_zero_cli`                      | `lib.rs:59` | Finds zero binary and returns path + version.                     |
-| `start_zero_session(cwd, session_id?)` | `lib.rs:65` | Tells the bridge the workspace. Optional `session_id` for resume. |
-| `send_zero_message(content)`           | `lib.rs:73` | Sends a user message. Bridge spawns `zero exec` if needed.        |
-| `stop_zero_session`                    | `lib.rs:78` | Kills the current zero process and clears state.                  |
+| `locate_zero_cli`                      | `lib.rs`    | Finds zero binary and returns path + version.                     |
+| `start_zero_session(cwd, session_id?)` | `lib.rs`    | Spawns `zero acp` in the workspace directory. Optional `session_id` for `session/load`. |
+| `send_zero_message(content, file?)`    | `lib.rs`    | Sends a user message with optional file attachment.               |
+| `stop_zero_session`                    | `lib.rs`    | Kills the current zero process and clears all session state.      |
+| `cancel_zero_run`                      | `lib.rs`    | Kills the process but preserves session id/history for reattach.  |
+| `list_zero_sessions(cwd)`              | `lib.rs`    | Lists sessions filtered by workspace directory.                   |
 
 ### Bridge State (`bridge.rs`)
 
-The `ZeroBridge` holds a `SessionState` per active connection:
+The `ZeroBridge` manages an `AcpSession` per active workspace:
 
 ```rust
-struct SessionState {
-    cwd: PathBuf,                           // workspace directory
-    session_id: Arc<Mutex<Option<String>>>, // captured from run_start
-    child: Option<Child>,                   // current zero process
+struct AcpSession {
+    cwd: PathBuf,             // workspace directory
+    session_id: String,       // captured from session/new or session/load response
+    history_path: PathBuf,    // zero-desktop's local history file for this session
+    live: Option<LiveProcess>, // the running zero acp child process + AcpPeer
 }
 ```
 
-- `start(cwd, resume_id)` — stores the workspace and optional resume session ID.
-- `send(event)` — spawns a new `zero exec` process (with `--resume` if session_id is set), writes the message, and spawns stdout/stderr readers that emit Tauri events.
-- `stop()` — kills the child process and clears state.
+- `start(cwd, resume_id)` — kills any previous session's process, spawns a new `zero acp`, completes the `initialize` handshake, and opens the session (`session/new` or `session/load`).
+- `send(content, file?)` — persists the user message to the local history, then fires `session/prompt` in a background task. Returns immediately; progress streams via `zero:event`.
+- `cancel()` — kills the live process but keeps `session_id` and `history_path` so the next `send()` respawns and `session/load`s back in.
+- `stop()` — kills the process and clears all session state.
 
 ## Dependencies
 
@@ -144,4 +148,4 @@ struct SessionState {
 ## References
 
 - [Connection Architecture](../architecture/connection.md)
-- [ADR 001: Connection via stream-json](../architecture/decisions/001-connection-via-stream-json.md)
+- [Session System](./session-system.md)

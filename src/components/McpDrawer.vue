@@ -71,16 +71,13 @@
             <div class="mcp-drawer__diff-header">
               <span>{{ basename(expandedFile.path) }}</span>
               <q-tooltip>{{ expandedFile.path }}</q-tooltip>
-              <q-btn
-                round
-                dense
-                flat
-                size="xs"
-                icon="close"
-                @click="expandedFilePath = null"
-              />
+              <q-btn round dense flat size="xs" icon="close" @click="expandedFilePath = null" />
             </div>
-            <div v-for="(edit, i) in expandedFile.edits" :key="edit.id" class="mcp-drawer__diff-edit">
+            <div
+              v-for="(edit, i) in expandedFile.edits"
+              :key="edit.id"
+              class="mcp-drawer__diff-edit"
+            >
               <div v-if="expandedFile.edits.length > 1" class="mcp-drawer__diff-edit-label">
                 {{ $t("mcp.editedFilesEditN", { n: i + 1 }) }}
               </div>
@@ -208,11 +205,7 @@ import { getEditStrings } from "@/utils/edit-tools";
 
 const $q = useQuasar();
 const zeroStore = useZeroStore();
-const {
-  mcpBackends: backends,
-  isLoadingMcp: isLoading,
-  editedFiles,
-} = storeToRefs(zeroStore);
+const { mcpBackends: backends, isLoadingMcp: isLoading, editedFiles } = storeToRefs(zeroStore);
 
 const props = defineProps({
   modelValue: {

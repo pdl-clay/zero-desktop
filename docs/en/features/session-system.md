@@ -1,20 +1,16 @@
 # Session System
 
-This document describes how zero-desktop lists, displays, and resumes chat sessions from the zero CLI.
+This document describes how zero-desktop lists, displays, resumes, and manages chat sessions from the zero CLI.
 
 ## Overview
 
 Zero persists every conversation turn to disk at `~/.local/share/zero/sessions/<session-id>/`. Each session directory contains:
 
-- `events.jsonl` — all events (messages, tool calls, usage stats) as JSONL (one JSON object per line).
+- `events.jsonl` — all events as JSONL (one JSON object per line). In ACP mode, zero only writes `message` entries here.
 - `metadata.json` — session metadata.
 - `session.lock` — concurrency lock.
 
-zero-desktop consumes this data to:
-
-- List sessions scoped to the active workspace (`zero sessions list --json`, filtered by `cwd`).
-- Load full message history from `events.jsonl` when a session is clicked.
-- Resume sessions via `zero exec --resume <sessionId>` so the model retains conversation context.
+zero-desktop maintains its **own** richer session history at `~/.local/share/zero-desktop/session-history/<sessionId>.jsonl`, which records messages, tool calls, reasoning, permission requests, and permission decisions — everything the app needs to faithfully replay a session. Two additional overlay files (`session-titles.json` and `session-models.json`) fill in data that ACP does not surface.
 
 ## Data Flow
 
@@ -25,23 +21,38 @@ zero-desktop consumes this data to:
 │    sessions/<id>/            │
 │      events.jsonl            │
 └──────────┬──────────────────┘
-           │ read by Rust
+            │ read by Rust (fallback)
+┌──────────▼──────────────────┐
+│  zero-desktop local data     │
+│  ~/.local/share/             │
+│    zero-desktop/             │
+│      session-history/        │
+│        <id>.jsonl (primary)  │
+│      session-titles.json     │
+│      session-models.json     │
+└──────────┬──────────────────┘
+            │ read by Rust
 ┌──────────▼──────────────────┐
 │  Tauri Rust Backend          │
 │  list_zero_sessions(cwd)     │
-│    → zero sessions list --json + filter by cwd
+│    → zero sessions list --json + filter by cwd + overlay titles/models
 │  load_session_history(id)    │
-│    → read events.jsonl, parse message events
+│    → prefer local log, fallback to zero's events.jsonl
+│  delete_session(id)          │
+│    → remove local log + title/model + zero's directory
+│  rename_session(id, title)   │
+│    → update session-titles.json
 └──────────┬──────────────────┘
-           │ Tauri IPC `invoke`
+            │ Tauri IPC `invoke`
 ┌──────────▼──────────────────┐
 │  Frontend (Pinia Store)     │
 │  loadSessions(cwd)           │
 │  openSession(sessionId)      │
-│  sessions[] state            │
-│  messages[] state            │
+│    → buildMessagesFromHistory(events)
+│  _sessionSyncTimer (3s)      │
+│    → periodic history re-read
 └──────────┬──────────────────┘
-           │ reactive bindings
+            │ reactive bindings
 ┌──────────▼──────────────────┐
 │  MainLayout.vue (drawer)    │
 │  ChatView.vue (messages)    │
@@ -50,7 +61,7 @@ zero-desktop consumes this data to:
 
 ## Rust Backend
 
-### `list_zero_sessions` (`lib.rs:28`)
+### `list_zero_sessions` (`lib.rs`)
 
 ```
 Tauri command: list_zero_sessions(cwd: PathBuf) → Vec<SessionInfo>
@@ -59,74 +70,71 @@ Tauri command: list_zero_sessions(cwd: PathBuf) → Vec<SessionInfo>
 1. Spawns `zero sessions list --json`.
 2. Parses the JSON array into `Vec<SessionInfo>`.
 3. Filters sessions where `session.cwd == <requested cwd>`.
-4. Returns the filtered list.
+4. Overlays zero-desktop's own titles (from `session-titles.json`) and model ids (from `session-models.json`), since ACP-created sessions get a generic "ACP session" title and an empty `modelId` from zero itself.
+5. Returns the filtered and overlaid list.
 
 **SessionInfo struct:**
 
 ```rust
-#[derive(Serialize)]
 pub struct SessionInfo {
     pub session_id: String,   // unique ID from zero
-    pub title: String,        // first user message or empty
+    pub title: String,        // zero-desktop's title (auto or user-set)
     pub created_at: String,   // ISO 8601 timestamp
     pub cwd: String,          // workspace directory
-    pub model_id: String,     // e.g. "deepseek-v4-flash"
+    pub model_id: String,     // overlaid from session-models.json
     pub event_count: Option<i64>,
     pub kind: String,         // "" | "fork" | "child"
     pub provider: String,     // e.g. "openai-compatible"
 }
 ```
 
-**Serialization note:** The struct uses `#[serde(alias = "sessionId")]` (not `rename`) so zero's camelCase JSON is deserialized correctly, but the response to the frontend uses snake_case (`session_id`, `created_at`, `model_id`).
-
-### `load_session_history` (`lib.rs:39`)
+### `load_session_history` (`lib.rs`)
 
 ```
-Tauri command: load_session_history(session_id: String) → Vec<ChatMessage>
+Tauri command: load_session_history(session_id: String) → Vec<SessionEvent>
 ```
 
-1. Resolves the session directory: `<data_dir>/zero/sessions/<session_id>/events.jsonl`.
-2. Reads the file line by line.
-3. Filters for events where `type == "message"`.
-4. Extracts `payload.role`, `payload.content`, and `createdAt`.
-5. Returns an array of `ChatMessage`.
+1. First tries zero-desktop's own local log at `<data_dir>/zero-desktop/session-history/<sessionId>.jsonl`.
+2. Falls back to zero's own `events.jsonl` at `<data_dir>/zero/sessions/<sessionId>/events.jsonl`.
+3. Reads the file line by line, filtering for relevant event types: `message`, `reasoning`, `tool_call`, `tool_result`, `permission_request`, `permission_decision`, `error`.
+4. Returns an array of `SessionEvent` with `type`, `payload` (untyped JSON), and `createdAt`.
 
-**ChatMessage struct:**
+The frontend's `buildMessagesFromHistory` normalizes these into typed messages (text, thinking, tool_call, permission_request, etc.) the same way live stream events are normalized.
 
-```rust
-#[derive(Serialize)]
-pub struct ChatMessage {
-    pub role: String,       // "user" | "assistant"
-    pub content: String,    // message text
-    pub timestamp: String,  // ISO 8601
-}
-```
-
-### `delete_session` (`lib.rs:79`)
+### `delete_session` (`lib.rs`)
 
 ```
 Tauri command: delete_session(session_id: String) → ()
 ```
 
-1. Resolves `<data_dir>/zero/sessions/<session_id>/`.
-2. Removes the entire directory with `std::fs::remove_dir_all`.
-3. No error if already gone (idempotent via `exists()` check).
+1. Removes zero-desktop's local history file (`session-history/<id>.jsonl`).
+2. Removes title and model overlay entries.
+3. Removes zero's entire session directory (`<data_dir>/zero/sessions/<id>/`).
+4. No error if already gone (idempotent).
 
-When `start_zero_session` is called with a `session_id`, the bridge stores it:
+### `rename_session` (`lib.rs`)
 
-```rust
-state.start(cwd, Some(session_id)).await
+```
+Tauri command: rename_session(session_id: String, title: String) → ()
 ```
 
-On the first `send()`, instead of spawning a plain `zero exec`, the bridge adds `--resume <sessionId>`:
+Updates the entry in `session-titles.json`. Called automatically on the first message of a session (to derive a title from the message content), and on explicit user renames.
 
-```rust
-if let Some(ref id) = resume_id {
-    cmd.arg("--resume").arg(id);
-}
-```
+### Session resume
 
-This causes zero to load the existing session context, so the model remembers the conversation history. The stdout reader still captures the `sessionId` from the `run_start` event for subsequent turns.
+When `start_zero_session` is called with a `session_id`, the bridge opens the session via `session/load` (the ACP equivalent of `--resume`). If `session/load` fails (e.g. the session directory was deleted), it falls back to `session/new` — the conversation starts fresh rather than erroring out.
+
+### Title derivation
+
+On the first `send()` of a session, if no title is recorded yet:
+
+- The first 60 characters of the user's message (collapsed whitespace) become the title.
+- A file-only message (empty content) falls back to the file's name.
+- The title is persisted in `session-titles.json`.
+
+### Model snapshot
+
+After every successful handshake (`session/new`, `session/load`, or fallback), the bridge snapshots the currently active model (from `zero config --json`) into `session-models.json`. This ensures the session list shows which model answered, even after the model is switched globally.
 
 ## Frontend
 
@@ -136,32 +144,46 @@ This causes zero to load the existing session context, so the model remembers th
 | ------------------ | ----------------------------------- | -------------------------------------- |
 | `currentSessionId` | `string \| null`                    | ID of the currently viewed session.    |
 | `sessions`         | `Array`                             | Session list for the active workspace. |
-| `messages`         | `Array<{role, content, timestamp}>` | Chat messages displayed in `ChatView`. |
+| `messages`         | `Array<typed message>`              | Full message list displayed in `ChatView`. Includes text, thinking, tool_call, permission_request, permission_decision, error. |
 | `currentWorkspace` | `string`                            | Active workspace path.                 |
+| `isLoadingSession` | `boolean`                           | True while `openSession` is fetching history. |
 
 ### Actions
 
 | Action | Description |
-|---|---|---|
+|---|---|
 | `loadSessions(cwd)` | Calls `listZeroSessions(cwd)` and stores in `this.sessions`. Silently catches errors. |
-| `openSession(sessionId)` | Calls `loadSessionHistory(sessionId)`, maps the response to `{role, content, timestamp}` objects, and sets `this.messages`. Sets `this.currentSessionId`. |
-| `removeSession(sessionId)` | Calls `deleteSession(sessionId)` (Rust removes the session directory from disk), resets `currentSessionId` and messages if the deleted session was active, then refreshes the session list. |
+| `openSession(sessionId)` | Calls `loadSessionHistory(sessionId)`, runs `buildMessagesFromHistory` to populate `this.messages` with typed message objects. Sets `this.currentSessionId` and starts the 3s sync timer. |
+| `removeSession(sessionId)` | Calls `deleteSession(sessionId)`. If the deleted session was active, stops it first so the bridge stops writing to its directory. Resets state and refreshes the session list. |
+| `renameSession(sessionId, title)` | Calls `renameSession(sessionId, title)` then refreshes the session list. |
 | `startSession(cwd, sessionId?)` | Reconnects the bridge with optional session resume. Clears `messages`, sets `currentWorkspace` and `currentSessionId`. |
 
-### Auto-Refresh
+### History replay (`buildMessagesFromHistory`)
 
-When a `run_end` event arrives (after zero finishes processing a message), the store automatically refreshes the session list:
+The frontend normalizes persisted events into the same typed message shape used for live events:
 
-```javascript
-case 'run_end':
-  // ... handle streaming response ...
-  if (this.currentWorkspace) {
-    this.loadSessions(this.currentWorkspace)
-  }
-  break
-```
+| Persisted event type   | Produces                                            |
+| ----------------------- | --------------------------------------------------- |
+| `message` (role=user)   | `{ type: "text", role: "user", content, file? }`    |
+| `message` (role=assistant) | `{ type: "text", role: "assistant", content }`   |
+| `reasoning`             | `{ type: "thinking", content }`                     |
+| `tool_call`             | `{ type: "tool_call", toolName, toolUseId, input }` |
+| `tool_result`           | Updates matching `tool_call` status + result        |
+| `permission_request`    | `{ type: "permission_request", answerable: false }` |
+| `permission_decision`   | Updates matching `permission_request` status        |
+| `error`                 | `{ type: "error", content }`                        |
 
-This ensures that newly created sessions (from the current chat) appear in the drawer immediately.
+Permission requests from history are always `answerable: false` — the process that asked is gone. If a matching `permission_decision` event exists, the request's status is updated to `approved` or `denied`; otherwise it renders as expired.
+
+### Periodic sync (`_sessionSyncTimer`)
+
+While a session is open (and no run is in progress), the store re-reads `load_sessionHistory` every 3 seconds. If the event count changed, it rebuilds the message list from scratch. This catches:
+
+- New events written by the bridge during the current turn.
+- External changes to the session from another zero-desktop instance.
+- Late-arriving events that were written after the initial `openSession` completed.
+
+The timer stops when the session is changed or closed.
 
 ## UI Components
 
@@ -171,7 +193,7 @@ This ensures that newly created sessions (from the current chat) appear in the d
 ┌────────────────────────────┐
 │  my-project                 │
 │  ──────────────────────    │
-│  Sessões (3)               │
+│  Sessions (3)               │
 │                            │
 │  💬 oi                    │  ← title from first message
 │     deepseek-v4  09/07     │
@@ -187,7 +209,7 @@ This ensures that newly created sessions (from the current chat) appear in the d
 
 - **Session item:** `q-item` with `clickable` and `v-ripple`. Active session highlighted with `bg-primary-1`.
 - **Icon:** `chat_bubble_outline` (default), `call_split` (fork), `subdirectory_arrow_right` (child).
-- **Title:** Uses `session.title` (from the first user message) or falls back to the last 8 characters of `session.session_id`.
+- **Title:** Uses `session.title` (from zero-desktop's overlay) or falls back to the last 8 characters of `session.session_id`.
 - **Subtitle:** `model_id` + formatted date (`DD/MM/YY HH:MM`).
 
 ### Session Click Flow
@@ -196,42 +218,17 @@ This ensures that newly created sessions (from the current chat) appear in the d
 User clicks session item
   → onSelectSession(session)
     → zeroStore.startSession(cwd, session.session_id)
-        → Bridge: stores resume_id, will use --resume on next send()
+        → Bridge: starts zero acp with session/load
     → zeroStore.openSession(session.session_id)
         → loadSessionHistory(session_id)
-        → history messages populate this.messages
+        → buildMessagesFromHistory builds typed messages
         → ChatView re-renders with full conversation
     → zeroStore.loadSessions(cwd)
-        → refresh session list (e.g., after external changes)
+        → refresh session list
 ```
-
-### Chat Message Display
-
-Messages loaded from history use the same `q-chat-message` component as live messages:
-
-| Role        | Name     | Background                               |
-| ----------- | -------- | ---------------------------------------- |
-| `user`      | "Você"   | `primary` (blue)                         |
-| `assistant` | "Zero"   | `grey-3` (light) or `grey-9` (dark mode) |
-| `system`    | "system" | `info`                                   |
-| `event`     | "event"  | `warning`                                |
-
-Dark mode adapts chat bubble colors automatically via `$q.dark.isActive`.
-
-## Testing
-
-Integration tests verify the session system end-to-end:
-
-| Test                                              | File                        | Verifies                                                                                                                                                                                                            |
-| ------------------------------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `test_sessions_list_filters_by_cwd`               | `tests/zero_integration.rs` | Creates a session in a temp dir, runs `zero sessions list --json`, asserts the session appears filtered by cwd.                                                                                                     |
-| `test_session_info_fields`                        | `tests/zero_integration.rs` | Asserts `sessionId`, `createdAt`, `modelId`, and `cwd` fields are present and correct.                                                                                                                              |
-| `test_delete_session_removes_from_list`           | `tests/zero_integration.rs` | Creates a session, verifies it exists on disk and in the session list, deletes it via `remove_dir_all`, verifies it no longer appears in the list.                                                                  |
-| `test_message_history_recovery_from_events_jsonl` | `tests/zero_integration.rs` | Creates a session with a known message, reads `events.jsonl` from disk, verifies user + assistant messages are present with correct roles, and checks required fields (`id`, `sessionId`, `createdAt`, `sequence`). |
-| `test_multi_turn_context_preserved_with_resume`   | `tests/zero_integration.rs` | Turn 1 sets context ("name is Alice"), turn 2 resumes via `--resume <id>` and asks "What is my name?" — asserts "Alice" appears.                                                                                    |
 
 ## References
 
-- [Zero Stream-JSON Protocol](https://github.com/Gitlawb/zero/blob/main/docs/STREAM_JSON_PROTOCOL.md)
 - [Connection Architecture](../architecture/connection.md)
 - [Workspace System](./workspace-system.md)
+- [zero-bridge](./zero-bridge.md)
