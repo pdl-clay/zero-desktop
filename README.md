@@ -1,7 +1,11 @@
+<p align="center">
+  🇺🇸 English • <a href="README.pt-br.md">🇧🇷 Português</a>
+</p>
+
 # Zero Desktop
 
 <p align="center">
-  <img src="src-tauri/icons/icon.png" alt="Zero Desktop" width="120" />
+  <img src="public/zero-completa.png" alt="Zero Desktop" width="420" />
 </p>
 
 <p align="center">
