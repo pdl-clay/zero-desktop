@@ -217,7 +217,7 @@
 </template>
 
 <script setup>
-import { ref, computed, nextTick, watch, onMounted, onBeforeUnmount, inject } from "vue";
+import { ref, computed, nextTick, watch, onMounted, inject } from "vue";
 import { useQuasar } from "quasar";
 import { useI18n } from "vue-i18n";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -244,7 +244,15 @@ const zeroStore = useZeroStore();
 const sessionStore = inject("zeroStore");
 const textareaRef = ref(null);
 const focused = ref(false);
-const attachedFile = ref(null);
+// Lives on the per-session store (not a local ref) so the terminal panel's
+// "cite to chat" action can set it on whichever panel is focused - see
+// zero-session-store.js's pendingAttachment.
+const attachedFile = computed({
+  get: () => sessionStore.pendingAttachment,
+  set: (value) => {
+    sessionStore.pendingAttachment = value;
+  },
+});
 const pickingFile = ref(false);
 const modelMenuOpen = ref(false);
 const modelSearch = ref("");
@@ -295,9 +303,23 @@ onMounted(() => {
   }
 });
 
-onBeforeUnmount(() => {
-  releaseAttachedFilePreview();
-});
+// Revokes an image attachment's blob: URL whenever it's actually replaced or
+// cleared - covers both this component's own pickFile()/removeAttachedFile()
+// (which already revoke explicitly before reassigning) and an attachment set
+// from outside (the terminal panel's "cite to chat", which never goes
+// through those functions). Deliberately NOT tied to this component's own
+// unmount: pendingAttachment lives on the session store, which outlives a
+// ChatInput/ChatView instance across a panel-count layout change (1↔2↔3↔4
+// panels remounts them) - revoking here on unmount would break the preview
+// the moment it remounts.
+watch(
+  () => sessionStore.pendingAttachment,
+  (next, prev) => {
+    if (prev?.previewUrl && prev.previewUrl !== next?.previewUrl) {
+      URL.revokeObjectURL(prev.previewUrl);
+    }
+  },
+);
 
 const localValue = computed({
   get: () => props.modelValue,

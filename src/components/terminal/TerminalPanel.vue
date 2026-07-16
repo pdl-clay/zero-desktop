@@ -76,6 +76,7 @@ import { useSessionRuntimeStore } from "@/stores/session-runtime-store";
 import { useTerminalRuntimeStore } from "@/stores/terminal-runtime-store";
 import { useTerminalSessionStore } from "@/stores/terminal-session-store";
 import { useZeroSessionStore } from "@/stores/zero-session-store";
+import { textToBase64 } from "@/utils/file";
 import TerminalTabStrip from "@/components/terminal/TerminalTabStrip.vue";
 import TerminalHost from "@/components/terminal/TerminalHost.vue";
 
@@ -150,6 +151,15 @@ function onCloseTab(key) {
 // McpDrawer.vue uses for its edited-files list) - inserts the focused
 // terminal tab's output as a fenced code block into that panel's draft
 // text, not the active terminal into itself or a hardcoded panel.
+// Attaches the output rather than pasting it as visible text: the compose
+// box would otherwise get filled with however many lines the terminal had
+// on screen, burying whatever the user was actually typing. This reuses the
+// exact same single-attachment slot ChatInput's own file-picker uses (see
+// zero-session-store.js's pendingAttachment) - a small chip showing the name
+// is the "signal that this will be sent" the user actually sees, and
+// send_zero_message already knows how to turn a text/plain attachment into
+// context for the agent (bridge.rs wraps it in an <attached file> block) -
+// no backend change needed.
 function onCite() {
   const workspacePath = workspacesStore.activePath;
   const termKey = activeKey.value;
@@ -161,8 +171,12 @@ function onCite() {
   const text = useTerminalSessionStore(termKey).extractCiteText();
   if (!text) return;
   const chatStore = useZeroSessionStore(chatKey);
-  const block = "```\n" + text + "\n```";
-  chatStore.draftText = chatStore.draftText ? `${chatStore.draftText}\n\n${block}` : block;
+  const title = terminalRuntime.keyMeta[termKey]?.title || "terminal";
+  chatStore.pendingAttachment = {
+    mimeType: "text/plain",
+    data: textToBase64(text),
+    name: `${title}-output.txt`,
+  };
 }
 
 let dragStartY = 0;

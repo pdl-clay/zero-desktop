@@ -119,6 +119,11 @@ export default {
     citeNoTarget: "Abra um terminal e foque um painel de chat primeiro",
     exited: "Encerrado ({code})",
   },
+  explorer: {
+    title: "Explorador",
+    empty: "Nenhum arquivo neste workspace",
+    citeNoTarget: "Foque um painel de chat primeiro, ou arraste o arquivo até um",
+  },
   common: {
     cancel: "Cancelar",
     ok: "OK",

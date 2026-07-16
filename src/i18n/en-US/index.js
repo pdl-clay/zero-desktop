@@ -119,6 +119,11 @@ export default {
     citeNoTarget: "Open a terminal and focus a chat panel first",
     exited: "Exited ({code})",
   },
+  explorer: {
+    title: "Explorer",
+    empty: "No files in this workspace",
+    citeNoTarget: "Focus a chat panel first, or drag the file onto one",
+  },
   common: {
     cancel: "Cancel",
     ok: "OK",

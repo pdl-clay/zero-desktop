@@ -1,6 +1,6 @@
 # Painel de Terminal
 
-Este documento descreve o emulador de terminal embutido — um painel encaixável na parte inferior da tela onde o usuário pode rodar processos de shell reais (servidores de dev, build tools, git, qualquer coisa) sem sair do app, e citar a saída de um terminal diretamente em um painel de chat focado para mostrar um erro ao agente.
+Este documento descreve o emulador de terminal embutido — um painel encaixável na parte inferior da tela onde o usuário pode rodar processos de shell reais (servidores de dev, build tools, git, qualquer coisa) sem sair do app, e anexar a saída de um terminal a um painel de chat focado para mostrar um erro ao agente.
 
 ## Visão Geral
 
@@ -9,7 +9,7 @@ O painel de terminal oferece:
 - **Shells reais, não um console falso**: cada aba inicia um processo de shell real com PTY (o `$SHELL` do próprio usuário, como shell de login), então prompts, cores, controle de jobs e programas interativos (`vim`, `htop`, REPLs) funcionam exatamente como em um terminal nativo.
 - **Multitarefa estilo abas de navegador**: abra/feche quantas abas de terminal forem necessárias; cada uma é um shell independente.
 - **Escopo por workspace**: as abas de terminal pertencem ao workspace em que foram abertas (mesmo modelo dos painéis de sessão de chat) — trocar de workspace mostra as abas daquele workspace, enquanto as abas de outros workspaces continuam rodando em segundo plano.
-- **Citação para o chat**: um botão na barra de ferramentas insere a saída visível (ou seleção) do terminal ativo como um bloco de código no painel de chat que estiver em foco no momento, para o usuário mostrar um erro ao agente sem precisar redigitá-lo.
+- **Citação para o chat**: um botão na barra de ferramentas anexa a saída visível (ou seleção) do terminal ativo ao painel de chat que estiver em foco no momento — como um chip pequeno (igual a um arquivo anexado), não colado como texto visível, para o campo de composição não ficar soterrado embaixo de quantas linhas estivessem na tela.
 
 O painel é um elemento customizado de posição fixa ancorado na parte inferior da janela (o `q-drawer` do Quasar só suporta `left`/`right`, não `bottom`), alternado por um botão flutuante e redimensionável por uma alça de arraste.
 
@@ -159,11 +159,13 @@ Um único botão na barra de ferramentas do `TerminalPanel.vue` (que opera sobre
 
 1. Resolve a aba de terminal em foco (`terminalRuntime.focusedKeyFor(activePath)`) e o painel de **chat** em foco (`sessionRuntime.focusedKeyFor(activePath)` — a mesma resolução que o `McpDrawer.vue` já usa para sua lista de arquivos editados).
 2. Lê a saída visível do terminal via `extractCiteText()`.
-3. Anexa como um bloco de código (` ``` `) ao `draftText` do painel de chat.
+3. Define como `pendingAttachment` daquele painel de chat — `{ mimeType: "text/plain", data: textToBase64(text), name: "<título-da-aba>-output.txt" }` — o mesmo formato e o mesmo slot de anexo único que o próprio seletor de arquivo do `ChatInput.vue` usa.
+
+Isso é deliberadamente um **anexo, não texto colado**: o campo de composição, do contrário, ficaria preenchido com quantas linhas o terminal tivesse na tela, soterrando o que o usuário estava de fato digitando. O `ChatInput.vue` renderiza como o mesmo chip pequeno (nome + tipo mime + botão de remover) que um arquivo escolhido recebe, e o `send_zero_message` já sabe transformar um anexo `text/plain` em contexto para o agente (`bridge.rs` envolve em um bloco `<attached file>`) — sem nenhuma mudança no backend.
 
 Isso exigiu dois pequenos pré-requisitos:
 
-- **`draftText` movido de um `ref` local no `ChatView.vue` para o `zero-session-store.js`** — o texto do campo de composição agora vive na store Pinia por sessão em vez de estado local do componente, então outro componente (o painel de terminal) consegue inserir texto no painel que estiver em foco sem precisar acessar internamente o `ChatView.vue`. É limpo automaticamente ao fechar o painel (`store.$reset()`, já chamado por `closePanel`/`stopAndDispose`).
+- **`pendingAttachment` (e `draftText`) movidos de `ref`s locais no `ChatInput.vue`/`ChatView.vue` para o `zero-session-store.js`** — tanto o texto do campo de composição quanto seu único anexo pendente agora vivem na store Pinia por sessão em vez de estado local do componente, então outro componente (o painel de terminal) consegue definir qualquer um deles no painel que estiver em foco sem precisar acessar internamente o `ChatInput.vue`/`ChatView.vue`. Ambos são limpos automaticamente ao fechar o painel (`store.$reset()`, já chamado por `closePanel`/`stopAndDispose`). O `ChatInput.vue` observa o anexo para revogar a blob: URL de uma imagem quando ele é substituído/removido (antes isso era feito no unmount — o que deixou de ser correto, já que o anexo agora sobrevive a uma remontagem causada por mudança na contagem de painéis).
 - **Rastreio de foco corrigido no `SessionTileGrid.vue`**: o `focusedKeyByPath` do `session-runtime-store.js` só era atualizado por `openPanel` (o painel aberto mais recentemente), nunca por o usuário clicar de fato em um painel já aberto — o `ChatView.vue` já emitia `@focus-input` no evento de foco do seu textarea, mas nada escutava esse evento. O `SessionTileGrid.vue` agora conecta esse emit (e um `@mousedown.capture` no painel inteiro, não só no textarea) a `sessionRuntime.focusPanel(key, activePath)`, para que "o painel em foco" reflita onde o usuário está realmente trabalhando.
 
 ## Notas de Comportamento

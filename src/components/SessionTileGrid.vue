@@ -11,7 +11,7 @@
     </template>
 
     <template v-else-if="openKeys.length === 1">
-      <div :class="paneCardClass" @mousedown.capture="onFocusInput(openKeys[0])">
+      <div :class="paneClass(openKeys[0])" v-bind="paneDropHandlers(openKeys[0])">
         <SessionPaneHeader :session-key="openKeys[0]" />
         <ChatView
           :session-key="openKeys[0]"
@@ -25,7 +25,7 @@
     <template v-else-if="openKeys.length === 2">
       <q-splitter v-model="splitterH" class="fit">
         <template #before>
-          <div :class="paneCardClass" @mousedown.capture="onFocusInput(openKeys[0])">
+          <div :class="paneClass(openKeys[0])" v-bind="paneDropHandlers(openKeys[0])">
             <SessionPaneHeader :session-key="openKeys[0]" />
             <ChatView
               :session-key="openKeys[0]"
@@ -36,7 +36,7 @@
           </div>
         </template>
         <template #after>
-          <div :class="paneCardClass" @mousedown.capture="onFocusInput(openKeys[1])">
+          <div :class="paneClass(openKeys[1])" v-bind="paneDropHandlers(openKeys[1])">
             <SessionPaneHeader :session-key="openKeys[1]" />
             <ChatView
               :session-key="openKeys[1]"
@@ -52,7 +52,7 @@
     <template v-else-if="openKeys.length === 3">
       <q-splitter v-model="splitterOuter" class="fit">
         <template #before>
-          <div :class="paneCardClass" @mousedown.capture="onFocusInput(openKeys[0])">
+          <div :class="paneClass(openKeys[0])" v-bind="paneDropHandlers(openKeys[0])">
             <SessionPaneHeader :session-key="openKeys[0]" />
             <ChatView
               :session-key="openKeys[0]"
@@ -65,7 +65,7 @@
         <template #after>
           <q-splitter v-model="splitterInnerV" horizontal class="fit">
             <template #before>
-              <div :class="paneCardClass" @mousedown.capture="onFocusInput(openKeys[1])">
+              <div :class="paneClass(openKeys[1])" v-bind="paneDropHandlers(openKeys[1])">
                 <SessionPaneHeader :session-key="openKeys[1]" />
                 <ChatView
                   :session-key="openKeys[1]"
@@ -76,7 +76,7 @@
               </div>
             </template>
             <template #after>
-              <div :class="paneCardClass" @mousedown.capture="onFocusInput(openKeys[2])">
+              <div :class="paneClass(openKeys[2])" v-bind="paneDropHandlers(openKeys[2])">
                 <SessionPaneHeader :session-key="openKeys[2]" />
                 <ChatView
                   :session-key="openKeys[2]"
@@ -96,7 +96,7 @@
         <template #before>
           <q-splitter v-model="splitterLeftV" horizontal class="fit">
             <template #before>
-              <div :class="paneCardClass" @mousedown.capture="onFocusInput(openKeys[0])">
+              <div :class="paneClass(openKeys[0])" v-bind="paneDropHandlers(openKeys[0])">
                 <SessionPaneHeader :session-key="openKeys[0]" />
                 <ChatView
                   :session-key="openKeys[0]"
@@ -107,7 +107,7 @@
               </div>
             </template>
             <template #after>
-              <div :class="paneCardClass" @mousedown.capture="onFocusInput(openKeys[1])">
+              <div :class="paneClass(openKeys[1])" v-bind="paneDropHandlers(openKeys[1])">
                 <SessionPaneHeader :session-key="openKeys[1]" />
                 <ChatView
                   :session-key="openKeys[1]"
@@ -122,7 +122,7 @@
         <template #after>
           <q-splitter v-model="splitterRightV" horizontal class="fit">
             <template #before>
-              <div :class="paneCardClass" @mousedown.capture="onFocusInput(openKeys[2])">
+              <div :class="paneClass(openKeys[2])" v-bind="paneDropHandlers(openKeys[2])">
                 <SessionPaneHeader :session-key="openKeys[2]" />
                 <ChatView
                   :session-key="openKeys[2]"
@@ -133,7 +133,7 @@
               </div>
             </template>
             <template #after>
-              <div :class="paneCardClass" @mousedown.capture="onFocusInput(openKeys[3])">
+              <div :class="paneClass(openKeys[3])" v-bind="paneDropHandlers(openKeys[3])">
                 <SessionPaneHeader :session-key="openKeys[3]" />
                 <ChatView
                   :session-key="openKeys[3]"
@@ -156,6 +156,7 @@ import { useQuasar } from "quasar";
 import { useSessionRuntimeStore } from "@/stores/session-runtime-store";
 import { useTerminalRuntimeStore } from "@/stores/terminal-runtime-store";
 import { useWorkspacesStore } from "@/stores/workspaces-store";
+import { attachFileToPanel } from "@/utils/attach-file-to-panel";
 import ChatView from "@/components/ChatView.vue";
 import SessionPaneHeader from "@/components/chat/SessionPaneHeader.vue";
 
@@ -181,6 +182,43 @@ const openKeys = computed(() => runtime.visibleKeys(workspacesStore.activePath))
 function onFocusInput(key) {
   if (!key) return;
   runtime.focusPanel(key, workspacesStore.activePath);
+}
+
+// The other half of the file explorer's hybrid citation flow (see
+// FileExplorerTree.vue): dropping a file directly onto a pane targets that
+// exact panel, regardless of which one is currently focused - the dragged
+// node's path travels via a custom dataTransfer MIME type set on dragstart.
+const dragOverKey = ref(null);
+
+function onDragOver(key) {
+  dragOverKey.value = key;
+}
+
+function onDragLeave(key) {
+  if (dragOverKey.value === key) dragOverKey.value = null;
+}
+
+async function onDropFile(event, key) {
+  dragOverKey.value = null;
+  const path = event.dataTransfer?.getData("application/x-zero-file");
+  if (!path || !key) return;
+  try {
+    await attachFileToPanel(path, key);
+  } catch (error) {
+    $q.notify({ type: "negative", message: String(error), position: "top" });
+  }
+}
+
+function paneDropHandlers(key) {
+  return {
+    onMousedownCapture: () => onFocusInput(key),
+    onDragover: (event) => {
+      event.preventDefault();
+      onDragOver(key);
+    },
+    onDragleave: () => onDragLeave(key),
+    onDrop: (event) => onDropFile(event, key),
+  };
 }
 
 // q-page-container never gets an explicit CSS height of its own (Quasar only
@@ -210,10 +248,15 @@ const gridHeight = computed(() => {
 // corners, translucent tinted background, hairline border) instead of being
 // a flush, borderless rectangle - matches the visual language already
 // established for the input bar rather than introducing a second style.
-const paneCardClass = computed(() => [
-  "session-pane-card column",
-  { "session-pane-card--dark": $q.dark.isActive },
-]);
+function paneClass(key) {
+  return [
+    "session-pane-card column",
+    {
+      "session-pane-card--dark": $q.dark.isActive,
+      "session-pane-card--drop-target": dragOverKey.value === key,
+    },
+  ];
+}
 
 const splitterH = ref(50);
 const splitterOuter = ref(50);
@@ -247,6 +290,11 @@ const splitterRightV = ref(50);
 .session-pane-card--dark {
   background: rgba(255, 255, 255, 0.05);
   border-color: rgba(255, 255, 255, 0.1);
+}
+
+.session-pane-card--drop-target {
+  border-color: rgba(25, 210, 77, 0.5);
+  background: rgba(25, 210, 77, 0.08);
 }
 
 :deep(.q-splitter__panel) {

@@ -19,6 +19,22 @@ export function isTextMimeType(mimeType) {
 }
 
 /**
+ * Encode a plain-text string as base64, the shape every attachment
+ * (`{ mimeType, data, name }`) expects for its `data` field. Uses
+ * `TextEncoder` (not `btoa` directly) so non-Latin1 text survives intact.
+ * @param {string} text
+ * @returns {string}
+ */
+export function textToBase64(text) {
+  const bytes = new TextEncoder().encode(text);
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary);
+}
+
+/**
  * Pick a Material icon name for a file based on its MIME type or extension.
  * @param {string} mimeType
  * @param {string} name

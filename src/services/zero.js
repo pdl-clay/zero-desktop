@@ -41,6 +41,16 @@ export async function readFileAttachment(path) {
 }
 
 /**
+ * List one directory level (folders + files), for the file explorer tree.
+ * Not recursive - children are loaded lazily as folders are expanded.
+ * @param {string} path - absolute directory path
+ * @returns {Promise<Array<{ name: string, path: string, isDir: boolean }>>}
+ */
+export async function listDirectoryEntries(path) {
+  return invoke("list_directory_entries", { path });
+}
+
+/**
  * Stop a specific session and remove its record.
  * @param {string} key
  */

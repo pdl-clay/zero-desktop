@@ -1,6 +1,6 @@
 # Terminal Panel
 
-This document describes the embedded terminal emulator — a dockable panel at the bottom of the screen where the user can run real shell processes (dev servers, build tools, git, anything) without leaving the app, and cite a terminal's output straight into a focused chat panel to show the agent an error.
+This document describes the embedded terminal emulator — a dockable panel at the bottom of the screen where the user can run real shell processes (dev servers, build tools, git, anything) without leaving the app, and attach a terminal's output to a focused chat panel to show the agent an error.
 
 ## Overview
 
@@ -9,7 +9,7 @@ The terminal panel provides:
 - **Real shells, not a fake console**: each tab spawns an actual PTY-backed shell process (the user's own `$SHELL`, as a login shell), so prompts, colors, job control, and interactive programs (`vim`, `htop`, REPLs) work exactly as in a native terminal.
 - **Browser-tab-style multitasking**: open/close as many terminal tabs as needed; each is an independent shell.
 - **Per-workspace scoping**: terminal tabs belong to the workspace they were opened in (same model as chat session panels) — switching workspaces shows that workspace's own tabs, while tabs from other workspaces keep running in the background.
-- **Citation to chat**: a toolbar button inserts the currently active terminal's visible output (or selection) as a fenced code block into whichever chat panel currently has focus, so the user can show the agent an error without retyping it.
+- **Citation to chat**: a toolbar button attaches the currently active terminal's visible output (or selection) to whichever chat panel currently has focus — as a small chip (like a picked file), not pasted as visible text, so the compose box doesn't get buried under however many lines were on screen.
 
 The panel is a custom fixed-position element docked to the bottom of the window (Quasar's `q-drawer` only supports `left`/`right`, not `bottom`), toggled by a floating button and resizable via a drag handle.
 
@@ -158,11 +158,13 @@ A single toolbar button in `TerminalPanel.vue` (operating on the currently focus
 
 1. Resolves the focused terminal tab (`terminalRuntime.focusedKeyFor(activePath)`) and the focused **chat** panel (`sessionRuntime.focusedKeyFor(activePath)` — the same resolution `McpDrawer.vue` already uses for its edited-files list).
 2. Reads the terminal's visible output via `extractCiteText()`.
-3. Appends it as a fenced code block (` ``` `) to the chat panel's `draftText`.
+3. Sets it as that chat panel's `pendingAttachment` — `{ mimeType: "text/plain", data: textToBase64(text), name: "<tab-title>-output.txt" }` — the same shape and same single-attachment slot `ChatInput.vue`'s own file-picker uses.
+
+This is deliberately an **attachment, not pasted text**: the compose box would otherwise get filled with however many lines the terminal had on screen, burying whatever the user was actually typing. `ChatInput.vue` renders it as the same small chip (name + mime type + remove button) a picked file gets, and `send_zero_message` already knows how to turn a `text/plain` attachment into agent context (`bridge.rs` wraps it in an `<attached file>` block) — no backend change needed.
 
 This required two small prerequisites:
 
-- **`draftText` moved from a local `ref` in `ChatView.vue` into `zero-session-store.js`** — the compose box's text now lives in the per-session Pinia store instead of local component state, so another component (the terminal panel) can insert text into whichever panel is focused without reaching into `ChatView.vue`'s internals. It's cleared automatically on panel close (`store.$reset()`, already called by `closePanel`/`stopAndDispose`).
+- **`pendingAttachment` (and `draftText`) moved from local `ref`s in `ChatInput.vue`/`ChatView.vue` into `zero-session-store.js`** — both the compose box's text and its single pending attachment now live in the per-session Pinia store instead of local component state, so another component (the terminal panel) can set either on whichever panel is focused without reaching into `ChatInput.vue`'s/`ChatView.vue`'s internals. Both are cleared automatically on panel close (`store.$reset()`, already called by `closePanel`/`stopAndDispose`). `ChatInput.vue` watches the attachment for replacement/removal to revoke an image's blob: URL (previously done on unmount — no longer correct, since the attachment now outlives a panel-count-driven remount).
 - **Focus tracking fixed in `SessionTileGrid.vue`**: `session-runtime-store.js`'s `focusedKeyByPath` used to be updated only by `openPanel` (most-recently-opened panel), never by the user actually clicking into an already-open pane — `ChatView.vue` already emitted `@focus-input` on its textarea's focus event, but nothing listened for it. `SessionTileGrid.vue` now wires that emit (and a `@mousedown.capture` on the whole pane, not just the textarea) to `sessionRuntime.focusPanel(key, activePath)`, so "the panel in focus" reflects where the user is actually working.
 
 ## Behavior Notes

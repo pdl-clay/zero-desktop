@@ -38,6 +38,14 @@ export function useZeroSessionStore(key) {
       // "cite to chat" action - can insert text into whichever panel is
       // focused without reaching into another component's internals.
       draftText: "",
+      // The compose box's pending attachment (one at a time): either a file
+      // the user picked via ChatInput's attach button, or a citation the
+      // terminal panel dropped in via "cite to chat" - both are the same
+      // `{ mimeType, data, name }` shape `send_zero_message` already accepts,
+      // rendered as the same chip in ChatInput.vue either way. Lives here for
+      // the same reason draftText does: so the terminal panel can set it on
+      // whichever panel is focused without reaching into ChatInput.vue.
+      pendingAttachment: null,
       // The model THIS session's own process is actually running under -
       // snapshotted whenever it (re)connects, and updated only when THIS
       // session explicitly switches. Deliberately separate from the global

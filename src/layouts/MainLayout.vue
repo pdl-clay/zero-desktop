@@ -127,106 +127,128 @@
             </q-banner>
 
             <template v-if="workspacesStore.hasActive">
-              <div class="text-caption panel-section-label q-mb-sm" style="min-width: 0">
-                {{ $t("workspace.sessions", { count: currentSessions.length }) }}
-              </div>
+              <q-splitter v-model="explorerSplitter" horizontal class="col" style="min-height: 0">
+                <template #before>
+                  <div class="column full-height" style="min-width: 0">
+                    <div class="text-caption panel-section-label q-mb-sm" style="min-width: 0">
+                      {{ $t("workspace.sessions", { count: currentSessions.length }) }}
+                    </div>
 
-              <q-scroll-area class="col" style="min-width: 0">
-                <!-- Session list -->
-                <q-list dense class="q-gutter-y-xs">
-                  <div
-                    v-for="session in currentSessions"
-                    :key="session.session_id"
-                    class="session-item-wrapper"
-                  >
-                    <q-item
-                      clickable
-                      v-ripple
-                      :class="[
-                        'session-item q-px-sm',
-                        {
-                          'session-item--active': isSessionOpen(session),
-                        },
-                      ]"
-                      @click="onSelectSession(session)"
-                    >
-                      <q-item-section side>
-                        <SessionIndicator
-                          :status="sessionWorkingStatus(session)"
-                          :attention="sessionAttention(session)"
-                          :size="18"
-                        />
-                      </q-item-section>
-
-                      <q-item-section class="session-item__content">
-                        <q-item-label class="text-body2 session-item__title" lines="1">
-                          {{ truncateTitle(session.title) || session.session_id.slice(-8) }}
-                          <q-tooltip v-if="session.title" anchor="top middle" self="bottom middle">
-                            {{ session.title }}
-                          </q-tooltip>
-                        </q-item-label>
-                        <q-item-label
-                          caption
-                          class="row items-center q-gutter-x-xs session-item__meta"
+                    <q-scroll-area class="col" style="min-width: 0">
+                      <!-- Session list -->
+                      <q-list dense class="q-gutter-y-xs">
+                        <div
+                          v-for="session in currentSessions"
+                          :key="session.session_id"
+                          class="session-item-wrapper"
                         >
-                          <span v-if="session.model_id" class="ellipsis">{{
-                            session.model_id
-                          }}</span>
-                          <span v-if="session.model_id">&middot;</span>
-                          <span class="ellipsis">{{ formatDate(session.created_at) }}</span>
-                        </q-item-label>
-                      </q-item-section>
-                    </q-item>
+                          <q-item
+                            clickable
+                            v-ripple
+                            :class="[
+                              'session-item q-px-sm',
+                              {
+                                'session-item--active': isSessionOpen(session),
+                              },
+                            ]"
+                            @click="onSelectSession(session)"
+                          >
+                            <q-item-section side>
+                              <SessionIndicator
+                                :status="sessionWorkingStatus(session)"
+                                :attention="sessionAttention(session)"
+                                :size="18"
+                              />
+                            </q-item-section>
 
-                    <q-btn
-                      class="session-rename-btn"
-                      round
-                      dense
-                      flat
-                      size="xs"
-                      icon="edit"
-                      color="grey-7"
-                      @click.stop="onRenameSession(session)"
-                    >
-                      <q-tooltip>{{ $t("workspace.renameSession") }}</q-tooltip>
-                    </q-btn>
-                    <q-btn
-                      class="session-remove-btn"
-                      round
-                      dense
-                      flat
-                      size="xs"
-                      icon="close"
-                      color="negative"
-                      @click.stop="onDeleteSession(session)"
-                    >
-                      <q-tooltip>{{ $t("workspace.deleteSession") }}</q-tooltip>
-                    </q-btn>
+                            <q-item-section class="session-item__content">
+                              <q-item-label class="text-body2 session-item__title" lines="1">
+                                {{ truncateTitle(session.title) || session.session_id.slice(-8) }}
+                                <q-tooltip
+                                  v-if="session.title"
+                                  anchor="top middle"
+                                  self="bottom middle"
+                                >
+                                  {{ session.title }}
+                                </q-tooltip>
+                              </q-item-label>
+                              <q-item-label
+                                caption
+                                class="row items-center q-gutter-x-xs session-item__meta"
+                              >
+                                <span v-if="session.model_id" class="ellipsis">{{
+                                  session.model_id
+                                }}</span>
+                                <span v-if="session.model_id">&middot;</span>
+                                <span class="ellipsis">{{ formatDate(session.created_at) }}</span>
+                              </q-item-label>
+                            </q-item-section>
+                          </q-item>
+
+                          <q-btn
+                            class="session-rename-btn"
+                            round
+                            dense
+                            flat
+                            size="xs"
+                            icon="edit"
+                            color="grey-7"
+                            @click.stop="onRenameSession(session)"
+                          >
+                            <q-tooltip>{{ $t("workspace.renameSession") }}</q-tooltip>
+                          </q-btn>
+                          <q-btn
+                            class="session-remove-btn"
+                            round
+                            dense
+                            flat
+                            size="xs"
+                            icon="close"
+                            color="negative"
+                            @click.stop="onDeleteSession(session)"
+                          >
+                            <q-tooltip>{{ $t("workspace.deleteSession") }}</q-tooltip>
+                          </q-btn>
+                        </div>
+
+                        <div
+                          v-if="currentSessions.length === 0"
+                          class="text-center panel-empty q-pa-md"
+                        >
+                          <q-icon name="chat" size="28px" />
+                          <div class="text-caption q-mt-xs">{{ $t("workspace.noSessions") }}</div>
+                        </div>
+
+                        <q-item
+                          v-if="currentSessions.length > 0"
+                          clickable
+                          v-ripple
+                          class="session-item session-item--new q-px-sm session-item-wrapper"
+                          @click="onNewSession"
+                        >
+                          <q-item-section side>
+                            <q-icon name="add_comment" size="16px" color="grey-5" />
+                          </q-item-section>
+                          <q-item-section>
+                            <q-item-label class="text-body2">{{
+                              $t("workspace.newSession")
+                            }}</q-item-label>
+                          </q-item-section>
+                        </q-item>
+                      </q-list>
+                    </q-scroll-area>
                   </div>
+                </template>
 
-                  <div v-if="currentSessions.length === 0" class="text-center panel-empty q-pa-md">
-                    <q-icon name="chat" size="28px" />
-                    <div class="text-caption q-mt-xs">{{ $t("workspace.noSessions") }}</div>
+                <template #after>
+                  <div class="column full-height" style="min-width: 0">
+                    <div class="text-caption panel-section-label q-mb-sm" style="min-width: 0">
+                      {{ $t("explorer.title") }}
+                    </div>
+                    <FileExplorerTree :root-path="workspacesStore.activePath" class="col" />
                   </div>
-
-                  <q-item
-                    v-if="currentSessions.length > 0"
-                    clickable
-                    v-ripple
-                    class="session-item session-item--new q-px-sm session-item-wrapper"
-                    @click="onNewSession"
-                  >
-                    <q-item-section side>
-                      <q-icon name="add_comment" size="16px" color="grey-5" />
-                    </q-item-section>
-                    <q-item-section>
-                      <q-item-label class="text-body2">{{
-                        $t("workspace.newSession")
-                      }}</q-item-label>
-                    </q-item-section>
-                  </q-item>
-                </q-list>
-              </q-scroll-area>
+                </template>
+              </q-splitter>
             </template>
 
             <template v-else>
@@ -301,6 +323,7 @@ import {
 import SessionTileGrid from "@/components/SessionTileGrid.vue";
 import McpDrawer from "@/components/McpDrawer.vue";
 import TerminalPanel from "@/components/terminal/TerminalPanel.vue";
+import FileExplorerTree from "@/components/explorer/FileExplorerTree.vue";
 import StatusBadge from "@/components/StatusBadge.vue";
 import WorkspaceAvatar from "@/components/WorkspaceAvatar.vue";
 import SessionIndicator from "@/components/SessionIndicator.vue";
@@ -315,6 +338,9 @@ const mcpDrawerOpen = ref($q.screen.width >= 1024);
 
 const isSmallScreen = $q.screen.lt.md;
 const sessionPanelOpen = ref(!isSmallScreen);
+// Splits the left drawer's session column into sessions (top) and the
+// file explorer tree (bottom) - percentage given to the sessions side.
+const explorerSplitter = ref(60);
 
 const dragIndex = ref(-1);
 const dragInsertIndex = ref(-1);

@@ -170,12 +170,38 @@ fn attachment_kind_from_extension(path: &Path) -> Result<(AttachmentKind, String
     }
 }
 
-/// Reads a file picked from the native file dialog and returns it
-/// base64-encoded, ready to preview or attach to a message. The dialog only
-/// ever gives the frontend a path, not bytes - no `fs` plugin/capability is
-/// installed, so this plain command reads the file with the same unrestricted
-/// `tokio::fs` access `list_zero_sessions`/`delete_session` already use,
-/// rather than adding a new plugin dependency.
+/// Decides how to attach a file given its path and already-read bytes.
+/// Tries the curated extension map first (keeps exact mime types like
+/// `application/json` for recognized types); falls back to treating any
+/// extensionless or unrecognized-extension file as plain text as long as it
+/// actually looks like text (valid UTF-8, no null byte) - this is what makes
+/// the file explorer usable for the many real project files a fixed
+/// extension list will never cover (`Dockerfile`, `Makefile`, `.gitignore`,
+/// `.env`, lockfiles: `Path::extension()` returns `None` for any of these
+/// since they have no `.ext` suffix, so the extension map alone always
+/// rejected them). Only genuinely binary-looking content is still rejected.
+fn attachment_kind_for_file(path: &Path, bytes: &[u8]) -> Result<(AttachmentKind, String), String> {
+    if let Ok(result) = attachment_kind_from_extension(path) {
+        if result.0 == AttachmentKind::Text && bytes.contains(&0) {
+            return Err("File contains binary data and cannot be attached as text.".to_string());
+        }
+        return Ok(result);
+    }
+
+    if bytes.contains(&0) || std::str::from_utf8(bytes).is_err() {
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        return Err(format!("Unsupported file type: .{ext}"));
+    }
+    Ok((AttachmentKind::Text, "text/plain".to_string()))
+}
+
+/// Reads a file picked from the native file dialog (or the file explorer
+/// tree) and returns it base64-encoded, ready to preview or attach to a
+/// message. The dialog/tree only ever give the frontend a path, not bytes -
+/// no `fs` plugin/capability is installed, so this plain command reads the
+/// file with the same unrestricted `tokio::fs` access
+/// `list_zero_sessions`/`delete_session` already use, rather than adding a
+/// new plugin dependency.
 #[tauri::command]
 async fn read_file_attachment(path: String) -> Result<FileAttachment, String> {
     let path_buf = PathBuf::from(&path);
@@ -190,16 +216,10 @@ async fn read_file_attachment(path: String) -> Result<FileAttachment, String> {
         ));
     }
 
-    let (kind, mime_type) = attachment_kind_from_extension(&path_buf)?;
     let bytes = tokio::fs::read(&path_buf)
         .await
         .map_err(|e| format!("Failed to read file: {e}"))?;
-    if kind == AttachmentKind::Text {
-        // Reject binary-looking files that happened to have a text extension.
-        if bytes.contains(&0) {
-            return Err("File contains binary data and cannot be attached as text.".to_string());
-        }
-    }
+    let (_kind, mime_type) = attachment_kind_for_file(&path_buf, &bytes)?;
     let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
     let name = path_buf
         .file_name()
@@ -207,6 +227,52 @@ async fn read_file_attachment(path: String) -> Result<FileAttachment, String> {
         .unwrap_or_else(|| "file".to_string());
 
     Ok(FileAttachment { mime_type, data, name })
+}
+
+/// One entry in a directory listing, for the file explorer tree.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DirEntryInfo {
+    pub name: String,
+    pub path: String,
+    pub is_dir: bool,
+}
+
+/// Lists one directory level (not recursive - the file explorer tree loads
+/// children lazily as folders are expanded, via Quasar QTree's own
+/// `lazy`/`@lazy-load`). Folders first, then files, each group sorted
+/// alphabetically case-insensitively - matches VS Code's default explorer
+/// sort. No `.gitignore`/dotfile filtering in this first pass.
+#[tauri::command]
+async fn list_directory_entries(path: String) -> Result<Vec<DirEntryInfo>, String> {
+    let mut dir = tokio::fs::read_dir(&path)
+        .await
+        .map_err(|e| format!("Failed to read directory: {e}"))?;
+
+    let mut entries = Vec::new();
+    while let Some(entry) = dir
+        .next_entry()
+        .await
+        .map_err(|e| format!("Failed to read directory entry: {e}"))?
+    {
+        let file_type = entry
+            .file_type()
+            .await
+            .map_err(|e| format!("Failed to read entry type: {e}"))?;
+        entries.push(DirEntryInfo {
+            name: entry.file_name().to_string_lossy().to_string(),
+            path: entry.path().to_string_lossy().to_string(),
+            is_dir: file_type.is_dir(),
+        });
+    }
+
+    entries.sort_by(|a, b| {
+        b.is_dir
+            .cmp(&a.is_dir)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+
+    Ok(entries)
 }
 
 const RELEVANT_HISTORY_EVENT_TYPES: &[&str] = &[
@@ -618,6 +684,7 @@ pub fn run() {
             delete_session,
             rename_session,
             read_file_attachment,
+            list_directory_entries,
             list_zero_models,
             switch_zero_model,
             list_live_sessions,
@@ -642,4 +709,45 @@ pub fn run() {
                 tauri::async_runtime::block_on(terminal_state.kill_all());
             }
         });
+}
+
+#[cfg(test)]
+mod attachment_tests {
+    use super::*;
+
+    #[test]
+    fn known_extension_keeps_exact_mime_type() {
+        let (kind, mime) =
+            attachment_kind_for_file(Path::new("data.json"), b"{}").expect("should be accepted");
+        assert_eq!(kind, AttachmentKind::Text);
+        assert_eq!(mime, "application/json");
+    }
+
+    #[test]
+    fn unknown_extension_falls_back_to_text_plain() {
+        let (kind, mime) = attachment_kind_for_file(Path::new("Dockerfile"), b"FROM rust:1\n")
+            .expect("text-looking extensionless file should be accepted");
+        assert_eq!(kind, AttachmentKind::Text);
+        assert_eq!(mime, "text/plain");
+    }
+
+    #[test]
+    fn unknown_extension_with_binary_bytes_is_rejected() {
+        let result = attachment_kind_for_file(Path::new("data.bin"), &[0xFF, 0xFE, 0x00, 0x01]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn known_text_extension_with_null_byte_is_rejected() {
+        let result = attachment_kind_for_file(Path::new("notes.txt"), &[0x00, b'a']);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn known_image_extension_is_not_sniffed_as_text() {
+        let (kind, mime) = attachment_kind_for_file(Path::new("photo.png"), &[0x89, b'P', b'N', b'G'])
+            .expect("known image extension should be accepted regardless of content");
+        assert_eq!(kind, AttachmentKind::Image);
+        assert_eq!(mime, "image/png");
+    }
 }
