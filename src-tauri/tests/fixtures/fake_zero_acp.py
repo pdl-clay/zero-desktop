@@ -80,6 +80,10 @@ def main():
             notify(session_id, {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "Done."}})
             send({"jsonrpc": "2.0", "id": msg_id, "result": {"stopReason": "end_turn"}})
 
+        elif method == "_zero/set_model":
+            model = msg.get("params", {}).get("model")
+            send({"jsonrpc": "2.0", "id": msg_id, "result": {"model": model}})
+
         elif method == "session/cancel":
             pass
         else:

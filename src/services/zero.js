@@ -205,3 +205,55 @@ export async function listMcpTools() {
 export async function loadMcpStatusCache() {
   return invoke("load_mcp_status_cache");
 }
+
+/**
+ * Get the global advisor configuration.
+ * @returns {Promise<{ enabled: boolean, model: string | null }>}
+ */
+export async function getAdvisorConfig() {
+  return invoke("get_advisor_config");
+}
+
+/**
+ * Save the global advisor configuration.
+ * @param {{ enabled: boolean, model: string | null }} config
+ */
+export async function setAdvisorConfig(config) {
+  return invoke("set_advisor_config", { config });
+}
+
+/**
+ * Toggle the advisor enabled state globally.
+ * @param {boolean} enabled
+ * @returns {Promise<{ enabled: boolean, model: string | null }>}
+ */
+export async function toggleAdvisor(enabled) {
+  return invoke("toggle_advisor", { enabled });
+}
+
+/**
+ * Set the advisor model globally.
+ * @param {string | null} model
+ * @returns {Promise<{ enabled: boolean, model: string | null }>}
+ */
+export async function setAdvisorModel(model) {
+  return invoke("set_advisor_model", { model });
+}
+
+/**
+ * Get the advisor configuration for a specific session.
+ * @param {string} key - session key
+ * @returns {Promise<{ enabled: boolean, model: string | null }>}
+ */
+export async function getSessionAdvisorConfig(key) {
+  return invoke("get_session_advisor_config", { key });
+}
+
+/**
+ * Set the advisor configuration for a specific session.
+ * @param {string} key - session key
+ * @param {{ enabled: boolean, model: string | null }} config
+ */
+export async function setSessionAdvisorConfig(key, config) {
+  return invoke("set_session_advisor_config", { key, config });
+}

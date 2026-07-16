@@ -1,4 +1,5 @@
 pub mod acp;
+pub mod advisor;
 pub mod bridge;
 pub mod locator;
 pub mod mcp_cache;
@@ -586,8 +587,7 @@ async fn switch_zero_model(
     key: String,
     model: String,
 ) -> Result<(), String> {
-    bridge::switch_active_model(&model).await?;
-    state.cancel(key).await
+    state.switch_session_model(key, model).await
 }
 
 #[tauri::command]
@@ -651,6 +651,56 @@ async fn list_terminals(
     Ok(state.list().await)
 }
 
+/// Retorna a configuração global do advisor.
+#[tauri::command]
+fn get_advisor_config() -> Result<advisor::AdvisorConfig, String> {
+    Ok(advisor::load_global_config())
+}
+
+/// Salva a configuração global do advisor.
+#[tauri::command]
+fn set_advisor_config(config: advisor::AdvisorConfig) -> Result<(), String> {
+    advisor::save_global_config(&config)
+}
+
+/// Ativa ou desativa o advisor para a configuração global.
+#[tauri::command]
+fn toggle_advisor(enabled: bool) -> Result<advisor::AdvisorConfig, String> {
+    let mut config = advisor::load_global_config();
+    config.enabled = enabled;
+    advisor::save_global_config(&config)?;
+    Ok(config)
+}
+
+/// Define o modelo do advisor na configuração global.
+#[tauri::command]
+fn set_advisor_model(model: Option<String>) -> Result<advisor::AdvisorConfig, String> {
+    let mut config = advisor::load_global_config();
+    config.model = model;
+    advisor::save_global_config(&config)?;
+    Ok(config)
+}
+
+/// Retorna o advisor config para uma sessão específica.
+#[tauri::command]
+async fn get_session_advisor_config(
+    state: tauri::State<'_, Arc<ZeroBridge>>,
+    key: String,
+) -> Result<advisor::AdvisorConfig, String> {
+    state.get_advisor_config(&key).await
+        .ok_or_else(|| format!("No active session for key: {}", key))
+}
+
+/// Atualiza o advisor config para uma sessão específica.
+#[tauri::command]
+async fn set_session_advisor_config(
+    state: tauri::State<'_, Arc<ZeroBridge>>,
+    key: String,
+    config: advisor::AdvisorConfig,
+) -> Result<(), String> {
+    state.set_advisor_config(&key, config).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -697,7 +747,13 @@ pub fn run() {
             write_terminal,
             resize_terminal,
             kill_terminal,
-            list_terminals
+            list_terminals,
+            get_advisor_config,
+            set_advisor_config,
+            toggle_advisor,
+            set_advisor_model,
+            get_session_advisor_config,
+            set_session_advisor_config
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

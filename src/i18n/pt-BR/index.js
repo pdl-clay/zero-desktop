@@ -87,6 +87,9 @@ export default {
     connectionLost: "Conexão com o zero perdida — o processo terminou inesperadamente.",
     cancelled: "Cancelado",
     cancelRun: "Cancelar (Esc)",
+    advisorOn: "Advisor",
+    advisorOff: "Advisor",
+    advisorTooltip: "Ativar/desativar modo advisor para consultas técnicas",
   },
   plan: {
     title: "Plano",

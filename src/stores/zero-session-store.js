@@ -14,10 +14,13 @@ import {
   renameSession,
   respondToPermission as respondToPermissionApi,
   switchZeroModel,
+  getSessionAdvisorConfig,
+  setSessionAdvisorConfig,
 } from "@/services/zero";
 import { useSessionRuntimeStore } from "@/stores/session-runtime-store";
 import { useZeroStore } from "@/stores/zero-store";
 import { isEditTool } from "@/utils/edit-tools";
+import { isAdvisorConsultation, extractAdvisorPrompt } from "@/utils/advisor-prompt";
 
 const MAX_STDERR_LINES = 20;
 const SESSION_SYNC_INTERVAL_MS = 3000;
@@ -69,15 +72,20 @@ export function useZeroSessionStore(key) {
       _cancelledByUser: false,
       _sessionSyncTimer: null,
       _lastEventCount: 0,
+      // Advisor mode state
+      advisorEnabled: false,
+      advisorModel: null,
     }),
 
     getters: {
       workingStatus(state) {
         if (state.currentThinking) return "thinking";
         const runningTool = state.messages.find(
-          (m) => m.type === "tool_call" && m.status === "running",
+          (m) => (m.type === "tool_call" || m.type === "advisor_consultation") && m.status === "running",
         );
-        if (runningTool) return { type: "tool", toolName: runningTool.toolName };
+        if (runningTool) {
+          return { type: "tool", toolName: runningTool.type === "advisor_consultation" ? "advisor" : runningTool.toolName };
+        }
         if (state.currentResponse) return "writing";
         if (state.runInProgress) return "sending";
         return null;
@@ -185,6 +193,8 @@ export function useZeroSessionStore(key) {
             this.activeModel = globalStore.activeModel;
           }
           this._startSessionSync();
+          // Load advisor config for this session
+          await this._loadAdvisorConfig();
         } catch (error) {
           const globalStore = useZeroStore();
           const errorMsg = String(error);
@@ -303,6 +313,53 @@ export function useZeroSessionStore(key) {
         } catch (error) {
           const globalStore = useZeroStore();
           globalStore.zeroError = error;
+        }
+      },
+
+      /**
+       * Toggle advisor mode for this session.
+       * @param {boolean} enabled
+       */
+      async toggleAdvisor(enabled) {
+        this.advisorEnabled = enabled;
+        try {
+          await setSessionAdvisorConfig(this.sessionKey, {
+            enabled,
+            model: this.advisorModel,
+          });
+        } catch (error) {
+          const globalStore = useZeroStore();
+          globalStore.zeroError = error;
+        }
+      },
+
+      /**
+       * Set the advisor model for this session.
+       * @param {string | null} model
+       */
+      async setAdvisorModel(model) {
+        this.advisorModel = model;
+        try {
+          await setSessionAdvisorConfig(this.sessionKey, {
+            enabled: this.advisorEnabled,
+            model,
+          });
+        } catch (error) {
+          const globalStore = useZeroStore();
+          globalStore.zeroError = error;
+        }
+      },
+
+      /**
+       * Load advisor config for this session from the backend.
+       */
+      async _loadAdvisorConfig() {
+        try {
+          const config = await getSessionAdvisorConfig(this.sessionKey);
+          this.advisorEnabled = config.enabled;
+          this.advisorModel = config.model;
+        } catch {
+          // Session might not have a config yet, use defaults
         }
       },
 
@@ -568,9 +625,13 @@ export function useZeroSessionStore(key) {
         }
 
         for (const msg of this.messages) {
-          if (msg.type === "tool_call" && msg.status === "running") {
+          if (msg.status !== "running") continue;
+          if (msg.type === "tool_call") {
             msg.status = "error";
             msg.result = i18n.global.t("chat.cancelled");
+          } else if (msg.type === "advisor_consultation") {
+            msg.status = "error";
+            msg.content = i18n.global.t("chat.cancelled");
           }
         }
 
@@ -698,6 +759,19 @@ export function useZeroSessionStore(key) {
           return;
         }
 
+        if (isAdvisorConsultation(event.name, event.args)) {
+          this.messages.push({
+            id: nextId(),
+            type: "advisor_consultation",
+            toolUseId: event.id,
+            prompt: extractAdvisorPrompt(event.args) || "",
+            content: "",
+            status: "running",
+            timestamp: Date.now(),
+          });
+          return;
+        }
+
         this.messages.push({
           id: nextId(),
           type: "tool_call",
@@ -713,10 +787,16 @@ export function useZeroSessionStore(key) {
       updateToolCallResult(event) {
         const toolUseId = event.id;
         const msg = this.messages.find(
-          (m) => m.type === "tool_call" && m.toolUseId === toolUseId && m.status === "running",
+          (m) =>
+            (m.type === "tool_call" || m.type === "advisor_consultation") &&
+            m.toolUseId === toolUseId &&
+            m.status === "running",
         );
-        if (msg) {
-          msg.status = event.status === "error" ? "error" : "completed";
+        if (!msg) return;
+        msg.status = event.status === "error" ? "error" : "completed";
+        if (msg.type === "advisor_consultation") {
+          msg.content = event.output || "";
+        } else {
           msg.result = event.output || "";
         }
       },

@@ -80,6 +80,10 @@
         <TextMessage v-if="message.type === 'text'" :message="message" />
         <ThinkingBlock v-else-if="message.type === 'thinking'" :message="message" />
         <ToolCallMessage v-else-if="message.type === 'tool_call'" :message="message" />
+        <AdvisorConsultation
+          v-else-if="message.type === 'advisor_consultation'"
+          :message="message"
+        />
         <PermissionDecisionBadge
           v-else-if="
             message.type === 'permission_request' &&
@@ -139,6 +143,7 @@ import { renderMarkdown } from "@/utils/markdown";
 import TextMessage from "@/components/chat/TextMessage.vue";
 import ThinkingBlock from "@/components/chat/ThinkingBlock.vue";
 import ToolCallMessage from "@/components/chat/ToolCallMessage.vue";
+import AdvisorConsultation from "@/components/chat/AdvisorConsultation.vue";
 import PermissionDecisionBadge from "@/components/chat/PermissionDecisionBadge.vue";
 import PendingPermissionPanel from "@/components/chat/PendingPermissionPanel.vue";
 import ErrorMessage from "@/components/chat/ErrorMessage.vue";

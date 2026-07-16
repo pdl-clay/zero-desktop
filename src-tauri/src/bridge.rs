@@ -512,41 +512,14 @@ pub async fn fetch_available_models() -> Result<AvailableModels, String> {
     Ok(AvailableModels { models, active: active_model })
 }
 
-/// Switches the active provider's model. This is a global, persisted zero
-/// CLI/config change, not a per-session ACP call - verified live that ACP
-/// has no such method (`session/set_model`/`session/models` both return
-/// "method not found"), no env var influences it, and `zero acp` rejects an
-/// unknown `--model` flag outright. Affects every `zero` process on this
-/// machine, not just this app. Caller is responsible for restarting the
-/// live process (see `ZeroBridge::cancel`) so the next turn picks up the
-/// change - this function only performs the CLI mutation.
-pub async fn switch_active_model(model: &str) -> Result<(), String> {
-    let (provider_name, _) = active_provider_entry()
-        .await
-        .ok_or_else(|| "Failed to resolve the active zero provider".to_string())?;
-
-    let zero_path = locate_zero()
-        .map_err(|e| format!("Failed to locate zero CLI: {e}"))?
-        .path;
-    let output = Command::new(&zero_path)
-        .arg("providers")
-        .arg("add")
-        .arg(&provider_name)
-        .arg("--name")
-        .arg(&provider_name)
-        .arg("--model")
-        .arg(model)
-        .arg("--set-active")
-        .output()
-        .await
-        .map_err(|e| format!("Failed to run zero providers add: {e}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Failed to switch model: {stderr}"));
+/// Appends the advisor-mode instruction (if enabled) to `content`, for use
+/// only in the text sent to `zero` via `session/prompt` - never in the
+/// persisted history or the title derived from the user's raw message.
+fn apply_advisor_instruction(content: &str, config: &crate::advisor::AdvisorConfig) -> String {
+    match crate::advisor::executor_instruction_prompt(config) {
+        Some(instruction) => format!("{content}{instruction}"),
+        None => content.to_string(),
     }
-
-    Ok(())
 }
 
 fn derive_title_from_message(content: &str) -> String {
@@ -590,16 +563,19 @@ struct AcpSession {
     session_id: String,
     history_path: PathBuf,
     live: Option<LiveProcess>,
+    /// Configuração do advisor para esta sessão.
+    advisor_config: crate::advisor::AdvisorConfig,
 }
 
 /// Bridge that manages a `zero acp` child process per active session and
 /// forwards translated events to the frontend keyed by session.
 ///
-/// One process per session (not shared across sessions/workspaces): `zero`
-/// has no `session/cancel` method (verified live - "method not found"), so
-/// interrupting a turn means killing the process. A single process shared
-/// across sessions would take every other open conversation down with it,
-/// so each session gets its own.
+/// One process per session (not shared across sessions/workspaces): even
+/// though cancelling a turn no longer requires killing the process (see
+/// `ZeroBridge::cancel`), a crashed or explicitly stopped process still
+/// takes its session down - a single process shared across sessions would
+/// take every other open conversation down with it, so each session still
+/// gets its own.
 pub struct ZeroBridge {
     app: tauri::AppHandle,
     sessions: Arc<Mutex<HashMap<String, AcpSession>>>,
@@ -718,13 +694,26 @@ impl ZeroBridge {
             }
         };
 
-        // Snapshotted here (after every successful handshake - session/new,
-        // session/load, or session/load-failed-so-fell-back-to-session/new)
-        // rather than only inside session_new(), so a respawn after a model
-        // switch (see ZeroBridge::cancel/switch_active_model) re-snapshots
-        // too - otherwise the session list would keep showing the model that
-        // was active when the session was first created.
-        if let Some(model_id) = active_model_id().await {
+        // If this session ever had its model switched via `_zero/set_model`
+        // (see `ZeroBridge::switch_session_model`), re-apply that choice
+        // after every handshake (session/new, session/load, or
+        // session/load-failed-so-fell-back-to-session/new) - a fresh
+        // `zero acp` process otherwise starts each session on the
+        // *provider's* default model, silently discarding a per-session
+        // choice across a crash/respawn. A session that never had its own
+        // model set falls back to snapshotting the provider default, same
+        // as before.
+        if let Some(desired_model) = get_session_model(&session_id) {
+            if let Err(e) = peer
+                .request(
+                    "_zero/set_model",
+                    serde_json::json!({ "sessionId": session_id, "model": desired_model }),
+                )
+                .await
+            {
+                log::warn!("[bridge] failed to reapply session model '{desired_model}' after respawn: {e}");
+            }
+        } else if let Some(model_id) = active_model_id().await {
             let _ = set_session_model(&session_id, &model_id);
         }
 
@@ -929,6 +918,7 @@ impl ZeroBridge {
                 session_id: session_id.clone(),
                 history_path,
                 live: Some(LiveProcess { child, peer }),
+                advisor_config: crate::advisor::load_global_config(),
             },
         );
 
@@ -1018,6 +1008,14 @@ impl ZeroBridge {
         }
         append_history(&history_path, "message", &message_payload).await;
 
+        // Advisor mode: append the instruction telling the executor to
+        // delegate to the `advisor` specialist (via the `Task` tool) for
+        // architectural/critical decisions - only in the text actually sent
+        // to `zero`, never in the persisted history or the title derived
+        // above, so the user's own message stays exactly what they typed.
+        let advisor_config = self.get_advisor_config(&key).await.unwrap_or_default();
+        let effective_content = apply_advisor_instruction(&content, &advisor_config);
+
         let app = self.app.clone();
         let key_for_event = key.clone();
         tokio::spawn(async move {
@@ -1026,7 +1024,7 @@ impl ZeroBridge {
                     "session/prompt",
                     serde_json::json!({
                         "sessionId": session_id,
-                        "prompt": build_prompt_blocks(&content, file.as_ref()),
+                        "prompt": build_prompt_blocks(&effective_content, file.as_ref()),
                     }),
                 )
                 .await;
@@ -1092,13 +1090,30 @@ impl ZeroBridge {
         .await
     }
 
-    /// Cancel the in-flight turn for the session identified by `key`. `zero`
-    /// has no `session/cancel` method, so this kills the process outright;
-    /// the session record (cwd/session_id) is kept so the next `send()`
-    /// respawns and `session/load`s back in.
+    /// Cancel the in-flight turn for the session identified by `key`. Sends
+    /// `session/cancel` as a fire-and-forget JSON-RPC *notification* -
+    /// `zero` registers it as a notification-only handler, not a request
+    /// (`peer.request("session/cancel", ...)` gets "method not found").
+    /// Verified live: the pending `session/prompt` call resolves with
+    /// `stopReason: "cancelled"` and the process/session stays alive and
+    /// responsive to the next prompt - no kill/respawn needed. Falls back to
+    /// killing the process only if the notification itself can't be sent
+    /// (e.g. the peer is already gone).
     pub async fn cancel(&self, key: String) -> Result<(), String> {
         let mut sessions = self.sessions.lock().await;
-        if let Some(s) = sessions.get_mut(&key) {
+        let Some(s) = sessions.get_mut(&key) else {
+            return Ok(());
+        };
+        let Some(live) = s.live.as_ref() else {
+            return Ok(());
+        };
+        let peer = live.peer.clone();
+        let session_id = s.session_id.clone();
+        if let Err(e) = peer
+            .notify("session/cancel", serde_json::json!({ "sessionId": session_id }))
+            .await
+        {
+            log::warn!("[bridge] session/cancel notify failed ({e}); killing process as fallback");
             if let Some(mut live) = s.live.take() {
                 Self::kill_live(&mut live).await;
             }
@@ -1113,6 +1128,61 @@ impl ZeroBridge {
                 Self::kill_live(&mut live).await;
             }
         }
+        Ok(())
+    }
+
+    /// Switch this session's model in place via `_zero/set_model`. Per-
+    /// session and takes effect on the next turn - no config mutation, no
+    /// kill/respawn (unlike the old `switch_active_model` +
+    /// `cancel`-to-force-respawn combo, which mutated the *global* provider
+    /// config via `zero providers add --set-active`, affecting every `zero`
+    /// process on the machine). If the session has no live process right
+    /// now, the choice is only persisted to `session-models.json` and gets
+    /// re-applied automatically the next time this session spawns (see the
+    /// respawn snapshot logic in `spawn_and_handshake`).
+    pub async fn switch_session_model(&self, key: String, model: String) -> Result<(), String> {
+        let sessions = self.sessions.lock().await;
+        let Some(s) = sessions.get(&key) else {
+            return Err(format!("No active session for key: {key}"));
+        };
+        let session_id = s.session_id.clone();
+        let live_peer = s.live.as_ref().map(|live| live.peer.clone());
+        drop(sessions);
+
+        if let Some(peer) = live_peer {
+            peer.request(
+                "_zero/set_model",
+                serde_json::json!({ "sessionId": session_id, "model": model }),
+            )
+            .await
+            .map_err(|e| format!("_zero/set_model failed: {e}"))?;
+        }
+
+        set_session_model(&session_id, &model)
+    }
+
+    /// Retorna o advisor config para uma sessão específica.
+    pub async fn get_advisor_config(&self, key: &str) -> Option<crate::advisor::AdvisorConfig> {
+        let sessions = self.sessions.lock().await;
+        sessions.get(key).map(|s| s.advisor_config.clone())
+    }
+
+    /// Atualiza o advisor config para uma sessão específica. Também
+    /// resincroniza o `model:` do frontmatter do specialist `advisor`
+    /// (`.zero/specialists/advisor.md` no workspace desta sessão) com o
+    /// modelo escolhido - é isso que faz o advisor de fato rodar num modelo
+    /// diferente do executor (ver `advisor::sync_specialist_model`).
+    pub async fn set_advisor_config(&self, key: &str, config: crate::advisor::AdvisorConfig) -> Result<(), String> {
+        let mut sessions = self.sessions.lock().await;
+        let Some(session) = sessions.get_mut(key) else {
+            return Err(format!("No active session for key: {key}"));
+        };
+        let workspace_root = session.cwd.clone();
+        let model = config.model.clone();
+        session.advisor_config = config;
+        drop(sessions);
+
+        let _ = crate::advisor::sync_specialist_model(&workspace_root, model.as_deref());
         Ok(())
     }
 
@@ -1332,5 +1402,33 @@ mod tests {
         assert_eq!(blocks.len(), 2);
         assert_eq!(blocks[0]["type"], "text");
         assert_eq!(blocks[1]["type"], "image");
+    }
+
+    #[test]
+    fn test_apply_advisor_instruction_disabled_leaves_content_unchanged() {
+        let config = crate::advisor::AdvisorConfig::default();
+        assert_eq!(apply_advisor_instruction("oi, tudo bem?", &config), "oi, tudo bem?");
+    }
+
+    #[test]
+    fn test_apply_advisor_instruction_enabled_appends_prompt() {
+        let config = crate::advisor::AdvisorConfig {
+            enabled: true,
+            model: None,
+        };
+        let result = apply_advisor_instruction("oi, tudo bem?", &config);
+        assert!(result.starts_with("oi, tudo bem?"), "user content must come first, unmodified");
+        assert!(result.contains("advisor_mode"));
+        assert!(result.contains("Task"));
+    }
+
+    #[test]
+    fn test_apply_advisor_instruction_enabled_with_model_hint() {
+        let config = crate::advisor::AdvisorConfig {
+            enabled: true,
+            model: Some("claude-opus-4-1".to_string()),
+        };
+        let result = apply_advisor_instruction("refatora isso", &config);
+        assert!(result.contains("claude-opus-4-1"));
     }
 }

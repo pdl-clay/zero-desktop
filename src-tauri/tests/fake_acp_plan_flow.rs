@@ -140,3 +140,47 @@ async fn test_fake_backend_plan_sequence_matches_bridge_contract() {
     reader.abort();
     let _ = child.kill().await;
 }
+
+/// `switch_session_model` (`bridge.rs`) relies on `_zero/set_model` being a
+/// real request/response method - fast regression check for the request
+/// shape against the fake backend, complementing the live confirmation in
+/// `acp::tests::test_live_cancel_and_set_model_avoid_process_kill`.
+#[tokio::test]
+async fn test_fake_backend_zero_set_model_roundtrip() {
+    let script = fake_backend_path();
+    let mut child = Command::new("python3")
+        .arg(&script)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to spawn fake acp backend");
+
+    let stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let peer = AcpPeer::new(stdin);
+    let reader_peer = peer.clone();
+
+    let reader = tokio::spawn(async move {
+        let mut lines = BufReader::new(stdout).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            if let Some(AcpMessage::Response { id, result }) = parse_line(&line) {
+                reader_peer.resolve_response(id, result).await;
+            }
+        }
+    });
+
+    let result = timeout(
+        Duration::from_secs(5),
+        peer.request(
+            "_zero/set_model",
+            serde_json::json!({"sessionId": "fake-session-1", "model": "big-model-x"}),
+        ),
+    )
+    .await
+    .expect("_zero/set_model timed out")
+    .expect("_zero/set_model should succeed");
+    assert_eq!(result["model"], "big-model-x");
+
+    reader.abort();
+    let _ = child.kill().await;
+}

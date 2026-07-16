@@ -78,6 +78,19 @@
         />
         <span class="chat-input__mode-label">{{ permissionModeLabel }}</span>
       </button>
+      <button
+        type="button"
+        class="chat-input__mode"
+        :class="{
+          'chat-input__mode--active': sessionStore.advisorEnabled,
+          'chat-input__mode--collapsed': isNarrowViewport,
+        }"
+        :disabled="disabled"
+        @click="toggleAdvisorMode"
+      >
+        <q-icon :name="sessionStore.advisorEnabled ? 'auto_awesome' : 'auto_awesome'" size="14px" />
+        <span class="chat-input__mode-label">{{ advisorModeLabel }}</span>
+      </button>
       <div class="chat-input__model-wrap">
         <button
           type="button"
@@ -271,6 +284,10 @@ const permissionModeLabel = computed(() =>
 
 const permissionModeTooltip = computed(() =>
   zeroStore.permissionMode === "auto_allow" ? t("chat.autoAllowTooltip") : t("chat.askTooltip"),
+);
+
+const advisorModeLabel = computed(() =>
+  sessionStore.advisorEnabled ? t("chat.advisorOn") : t("chat.advisorOff"),
 );
 
 // The model a session is actually running under is per-session (each
@@ -508,6 +525,11 @@ function togglePermissionMode() {
   const nextMode = zeroStore.permissionMode === "ask" ? "auto_allow" : "ask";
   zeroStore.setPermissionMode(nextMode);
   localStorage.setItem(permissionModeKey, nextMode);
+}
+
+function toggleAdvisorMode() {
+  const nextEnabled = !sessionStore.advisorEnabled;
+  sessionStore.toggleAdvisor(nextEnabled);
 }
 
 async function openModelMenu() {
