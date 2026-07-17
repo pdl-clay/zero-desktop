@@ -185,6 +185,165 @@ const store4 = createMessageStore();
 store4.addToolCall({ name: "read_file", id: "call-3", args: { path: "a.txt" } });
 assertEquals(store4.messages[0].type, "tool_call", "non-Task tool calls are unaffected");
 
+// --- toggleAdvisor/setAdvisorModel/_loadAdvisorConfig (mirrors zero-session-store.js) ---
+// Regression coverage for a real bug: a panel can sit open without a live
+// backend process (prepareSession defers the real connection to the first
+// sendMessage). Toggling advisor before that connection used to call the
+// backend anyway, throwing "No active session for key: ..." because
+// nothing was registered under that key yet. See src/stores/
+// zero-session-store.js's toggleAdvisor/setAdvisorModel/_loadAdvisorConfig.
+console.log("\ntoggleAdvisor/setAdvisorModel before vs. after connect (mirrored):");
+
+// Stand-in for localStorage - Node has no global localStorage by default, so
+// this mirrors loadAdvisorPreferences/saveAdvisorPreferences from
+// zero-session-store.js as a plain module-scoped object instead.
+function createPrefsStorage(initial = { model: null, mode: "max" }) {
+  let prefs = initial;
+  return {
+    load: () => prefs,
+    save: (next) => {
+      prefs = next;
+    },
+  };
+}
+
+function createAdvisorAwareStore(prefsStorage = createPrefsStorage()) {
+  const initial = prefsStorage.load();
+  return {
+    isConnected: false,
+    advisorEnabled: false,
+    advisorModel: initial.model,
+    advisorMode: initial.mode,
+    _advisorConfigDirty: false,
+    backendConfig: null, // what the "backend" thinks this session's config is
+    backendCalls: 0,
+    async toggleAdvisor(enabled) {
+      this.advisorEnabled = enabled;
+      if (!this.isConnected) {
+        this._advisorConfigDirty = true;
+        return;
+      }
+      this.backendCalls++;
+      this.backendConfig = { enabled, model: this.advisorModel, mode: this.advisorMode };
+    },
+    async setAdvisorModel(model) {
+      this.advisorModel = model;
+      prefsStorage.save({ model, mode: this.advisorMode });
+      if (!this.isConnected) {
+        this._advisorConfigDirty = true;
+        return;
+      }
+      this.backendCalls++;
+      this.backendConfig = { enabled: this.advisorEnabled, model, mode: this.advisorMode };
+    },
+    async setAdvisorMode(mode) {
+      this.advisorMode = mode;
+      prefsStorage.save({ model: this.advisorModel, mode });
+      if (!this.isConnected) {
+        this._advisorConfigDirty = true;
+        return;
+      }
+      this.backendCalls++;
+      this.backendConfig = { enabled: this.advisorEnabled, model: this.advisorModel, mode };
+    },
+    async _loadAdvisorConfig() {
+      if (this._advisorConfigDirty) {
+        this._advisorConfigDirty = false;
+        this.backendCalls++;
+        this.backendConfig = { enabled: this.advisorEnabled, model: this.advisorModel, mode: this.advisorMode };
+        return;
+      }
+      // Simulates reading the backend's default (e.g. the global config)
+      // for a session this panel never expressed a local opinion on yet.
+      // model uses ?? since null is the backend's genuine "no opinion"
+      // value; mode is only adopted when the backend config is actually
+      // enabled (a resumed session with a real opinion), otherwise the
+      // localStorage-seeded mode survives - a fresh backend default of
+      // "max" must not clobber a remembered "low" choice.
+      this.advisorEnabled = this.backendConfig?.enabled ?? false;
+      this.advisorModel = this.backendConfig?.model ?? this.advisorModel;
+      if (this.backendConfig?.enabled) {
+        this.advisorMode = this.backendConfig?.mode || this.advisorMode;
+      }
+    },
+    async connect() {
+      this.isConnected = true;
+      await this._loadAdvisorConfig();
+    },
+  };
+}
+
+const preConnect = createAdvisorAwareStore();
+preConnect.toggleAdvisor(true);
+assertEquals(preConnect.advisorEnabled, true, "toggling before connect still updates local state");
+assertEquals(preConnect.backendCalls, 0, "toggling before connect does not call the backend");
+assert(preConnect._advisorConfigDirty, "marks the config dirty when toggled before connect");
+
+preConnect.connect();
+assertEquals(preConnect.backendCalls, 1, "connecting pushes the dirty config to the backend exactly once");
+assertEquals(preConnect.advisorEnabled, true, "the user's pre-connect toggle survives connecting");
+assert(!preConnect._advisorConfigDirty, "clears the dirty flag once pushed");
+
+const noLocalChoice = createAdvisorAwareStore();
+noLocalChoice.backendConfig = { enabled: true, model: "gpt-5" }; // e.g. the global default
+noLocalChoice.connect();
+assertEquals(noLocalChoice.backendCalls, 0, "connecting without a prior local toggle does not push, only loads");
+assertEquals(noLocalChoice.advisorEnabled, true, "loads the backend's default when the panel never toggled locally");
+assertEquals(noLocalChoice.advisorModel, "gpt-5", "loads the backend's model default too");
+
+const postConnect = createAdvisorAwareStore();
+postConnect.isConnected = true;
+postConnect.toggleAdvisor(true);
+assertEquals(postConnect.backendCalls, 1, "toggling after connect calls the backend immediately");
+assert(!postConnect._advisorConfigDirty, "does not mark dirty when already connected");
+
+// --- setAdvisorMode + localStorage persistence (mirrored) ---
+console.log("\nsetAdvisorMode + localStorage persistence (mirrored):");
+
+const freshStore = createAdvisorAwareStore();
+assertEquals(freshStore.advisorMode, "max", "defaults to max mode with no saved preferences");
+
+const modeStore = createAdvisorAwareStore();
+modeStore.setAdvisorMode("low");
+assertEquals(modeStore.advisorMode, "low", "setAdvisorMode updates local state");
+assertEquals(modeStore.backendCalls, 0, "setAdvisorMode before connect does not call the backend");
+assert(modeStore._advisorConfigDirty, "setAdvisorMode before connect marks dirty");
+
+const modeStore2 = createAdvisorAwareStore();
+modeStore2.isConnected = true;
+modeStore2.setAdvisorMode("low");
+assertEquals(modeStore2.backendCalls, 1, "setAdvisorMode after connect calls the backend immediately");
+assertEquals(modeStore2.backendConfig.mode, "low", "backend config carries the new mode");
+
+// A new panel (fresh store instance) sharing the same underlying storage
+// must come up pre-filled with the previous panel's last choice - this is
+// the actual "survives restarts" guarantee, simulated here as "survives a
+// new store instance" since a real Tauri restart can't be driven from node.
+const sharedStorage = createPrefsStorage();
+const panelA = createAdvisorAwareStore(sharedStorage);
+panelA.setAdvisorModel("deepseek-v4-pro");
+panelA.setAdvisorMode("low");
+const panelB = createAdvisorAwareStore(sharedStorage);
+assertEquals(panelB.advisorModel, "deepseek-v4-pro", "a new panel picks up the remembered model");
+assertEquals(panelB.advisorMode, "low", "a new panel picks up the remembered mode");
+assertEquals(panelB.advisorEnabled, false, "a new panel still starts with advisor OFF regardless of remembered prefs");
+
+// A fresh (never-configured) backend session must not clobber the
+// localStorage-seeded mode with its own bare "max" default.
+const noOpinionYet = createAdvisorAwareStore(sharedStorage);
+noOpinionYet.backendConfig = { enabled: false, model: null, mode: "max" }; // fresh backend session default
+noOpinionYet.connect();
+assertEquals(noOpinionYet.advisorMode, "low", "a disabled/default backend config does not override the remembered mode");
+
+// A genuinely-configured (enabled) backend session - e.g. a resumed
+// session - DOES win, since it reflects a real prior choice for that
+// specific session, not a bare default.
+const resumedSession = createAdvisorAwareStore();
+resumedSession.backendConfig = { enabled: true, model: "gpt-5", mode: "low" };
+resumedSession.connect();
+assertEquals(resumedSession.advisorMode, "low", "an enabled backend config's mode is adopted");
+assertEquals(resumedSession.advisorModel, "gpt-5", "an enabled backend config's model is adopted");
+
 // --- Summary ---
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);

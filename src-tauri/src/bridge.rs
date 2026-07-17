@@ -522,6 +522,32 @@ fn apply_advisor_instruction(content: &str, config: &crate::advisor::AdvisorConf
     }
 }
 
+/// Resolves the advisor config to use when (re)inserting a session into the
+/// map: the existing session's own config when one is already tracked under
+/// this key (preserves it across a respawn - a dead process reconnecting
+/// under the same key, see AcpSession's doc comment: "the next send()
+/// respawns it"), otherwise the global default for a key that has
+/// genuinely never been seen before.
+///
+/// Before this, `ZeroBridge::start` unconditionally called
+/// `advisor::load_global_config()` on every (re)insert, which silently
+/// reverted `enabled` and the chosen advisor model back to global defaults
+/// on every respawn, with no user action - while the on-disk specialist
+/// file (last synced before the respawn, see `advisor::sync_specialist_model`)
+/// stayed pointed at whatever model the user had actually chosen. Nothing
+/// looked broken (the file on disk was still correct, and the UI's model
+/// picker just re-mirrored whatever `get_advisor_config` returned) until
+/// the next consultation silently used the wrong model, because the
+/// in-memory config actually driving `apply_advisor_instruction`'s
+/// `enabled` check - and `get_advisor_config`'s response, which the
+/// frontend trusts over its own local state on every reconnect - had reset.
+fn advisor_config_for_restart(existing: Option<&crate::advisor::AdvisorConfig>) -> crate::advisor::AdvisorConfig {
+    match existing {
+        Some(config) => config.clone(),
+        None => crate::advisor::load_global_config(),
+    }
+}
+
 fn derive_title_from_message(content: &str) -> String {
     const MAX_CHARS: usize = 60;
     let cleaned = content.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -911,6 +937,8 @@ impl ZeroBridge {
         let history_path = history_path_for(&session_id)?;
 
         let mut sessions = self.sessions.lock().await;
+        let advisor_config = advisor_config_for_restart(sessions.get(&key).map(|s| &s.advisor_config));
+
         sessions.insert(
             key.clone(),
             AcpSession {
@@ -918,7 +946,7 @@ impl ZeroBridge {
                 session_id: session_id.clone(),
                 history_path,
                 live: Some(LiveProcess { child, peer }),
-                advisor_config: crate::advisor::load_global_config(),
+                advisor_config,
             },
         );
 
@@ -1415,6 +1443,7 @@ mod tests {
         let config = crate::advisor::AdvisorConfig {
             enabled: true,
             model: None,
+            mode: crate::advisor::AdvisorMode::Max,
         };
         let result = apply_advisor_instruction("oi, tudo bem?", &config);
         assert!(result.starts_with("oi, tudo bem?"), "user content must come first, unmodified");
@@ -1423,12 +1452,55 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_advisor_instruction_enabled_with_model_hint() {
+    fn test_apply_advisor_instruction_enabled_with_model_does_not_repeat_it() {
+        // The model lives in the specialist file's own frontmatter (see
+        // advisor::sync_specialist_model), not in the injected prompt - the
+        // executor never needs it passed here.
         let config = crate::advisor::AdvisorConfig {
             enabled: true,
             model: Some("claude-opus-4-1".to_string()),
+            mode: crate::advisor::AdvisorMode::Max,
         };
         let result = apply_advisor_instruction("refatora isso", &config);
-        assert!(result.contains("claude-opus-4-1"));
+        assert!(!result.contains("claude-opus-4-1"));
+    }
+
+    #[test]
+    fn test_apply_advisor_instruction_low_mode_uses_restrictive_prompt() {
+        let config = crate::advisor::AdvisorConfig {
+            enabled: true,
+            model: None,
+            mode: crate::advisor::AdvisorMode::Low,
+        };
+        let result = apply_advisor_instruction("refatora isso", &config);
+        assert!(result.contains("modo Low"));
+        assert!(result.contains("Recuperação de falha repetida"));
+    }
+
+    #[test]
+    fn test_advisor_config_for_restart_preserves_existing_session_config() {
+        // The core regression: a respawn (dead process reconnecting under
+        // the same key) must not lose the session's own advisor
+        // enabled/model choice.
+        let existing = crate::advisor::AdvisorConfig {
+            enabled: true,
+            model: Some("deepseek-v4-pro".to_string()),
+            mode: crate::advisor::AdvisorMode::Low,
+        };
+        let result = advisor_config_for_restart(Some(&existing));
+        assert!(result.enabled);
+        assert_eq!(result.model, Some("deepseek-v4-pro".to_string()));
+        assert_eq!(result.mode, crate::advisor::AdvisorMode::Low);
+    }
+
+    #[test]
+    fn test_advisor_config_for_restart_falls_back_to_global_default_for_new_session() {
+        // Compared against a direct load_global_config() call (not fixed
+        // field values), so this doesn't depend on whatever this machine's
+        // saved global config file actually contains.
+        let result = advisor_config_for_restart(None);
+        let expected = crate::advisor::load_global_config();
+        assert_eq!(result.enabled, expected.enabled);
+        assert_eq!(result.model, expected.model);
     }
 }

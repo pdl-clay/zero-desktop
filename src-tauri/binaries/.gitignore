@@ -1,0 +1,5 @@
+# The actual sidecar binary is fetched by scripts/fetch-zero-sidecar.sh
+# (from pdl-clay/my-zero's GitHub Releases) - never commit the binary
+# itself, only this directory's existence.
+*
+!.gitignore

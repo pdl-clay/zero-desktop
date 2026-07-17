@@ -30,6 +30,41 @@ function nextId() {
   return `msg-${++_idCounter}`;
 }
 
+// Advisor model + trigger mode are remembered across restarts via
+// localStorage - separate from the enabled on/off state (a new chat still
+// starts with advisor off by default, same as before), but once the user
+// turns it on, the model/mode pickers should already reflect their last
+// choice instead of coming up blank/default every time the app restarts.
+// Backend session config (see _loadAdvisorConfig) can't carry this alone:
+// each session key is independent, and a genuinely new session's backend
+// config is always the {model: null, mode: "max"} default - there's no
+// "last used" concept on that side to fall back to.
+const ADVISOR_PREFS_STORAGE_KEY = "zero-advisor-preferences";
+
+function loadAdvisorPreferences() {
+  try {
+    const raw = localStorage.getItem(ADVISOR_PREFS_STORAGE_KEY);
+    if (!raw) return { model: null, mode: "max" };
+    const parsed = JSON.parse(raw);
+    return {
+      model: typeof parsed.model === "string" ? parsed.model : null,
+      mode: parsed.mode === "low" ? "low" : "max",
+    };
+  } catch {
+    return { model: null, mode: "max" };
+  }
+}
+
+function saveAdvisorPreferences({ model, mode }) {
+  try {
+    localStorage.setItem(ADVISOR_PREFS_STORAGE_KEY, JSON.stringify({ model, mode }));
+  } catch {
+    // Best-effort - localStorage can throw in private-browsing-like
+    // contexts or when full; losing the "remember my last choice"
+    // convenience isn't worth surfacing an error to the user over.
+  }
+}
+
 export function useZeroSessionStore(key) {
   return defineStore(`zero-session:${key}`, {
     state: () => ({
@@ -72,15 +107,28 @@ export function useZeroSessionStore(key) {
       _cancelledByUser: false,
       _sessionSyncTimer: null,
       _lastEventCount: 0,
-      // Advisor mode state
+      // Advisor mode state. model/mode are seeded from localStorage (see
+      // loadAdvisorPreferences) so a freshly created panel's settings popup
+      // already shows the user's last choice instead of coming up blank -
+      // enabled itself deliberately stays false here, so a new chat still
+      // starts with advisor off by default.
       advisorEnabled: false,
-      advisorModel: null,
+      advisorModel: loadAdvisorPreferences().model,
+      advisorMode: loadAdvisorPreferences().mode,
+      // True when toggleAdvisor/setAdvisorModel/setAdvisorMode was called
+      // before this session had a live backend process (see
+      // prepareSession - the real connection is deferred to the first
+      // sendMessage). Lets _loadAdvisorConfig know to push this panel's
+      // locally-chosen config once startSession connects, instead of
+      // overwriting it with whatever the freshly-registered backend
+      // session defaulted to.
+      _advisorConfigDirty: false,
     }),
 
     getters: {
       workingStatus(state) {
         if (state.currentThinking) return "thinking";
-        const runningTool = state.messages.find(
+        const runningTool = (state.messages || []).find(
           (m) => (m.type === "tool_call" || m.type === "advisor_consultation") && m.status === "running",
         );
         if (runningTool) {
@@ -100,7 +148,7 @@ export function useZeroSessionStore(key) {
       editedFiles(state) {
         const order = [];
         const byPath = new Map();
-        for (const m of state.messages) {
+        for (const m of state.messages || []) {
           if (m.type !== "tool_call") continue;
           if (!isEditTool(m.toolName)) continue;
           const path = m.input?.path;
@@ -322,10 +370,22 @@ export function useZeroSessionStore(key) {
        */
       async toggleAdvisor(enabled) {
         this.advisorEnabled = enabled;
+        // A panel can sit open without a live backend process (see
+        // prepareSession - the real connection is deferred to the first
+        // sendMessage), so there's no session yet for the backend to
+        // attach this config to. Trying anyway throws "No active session
+        // for key: ...". Mark it dirty instead; startSession pushes the
+        // locally-chosen config once it actually connects (see
+        // _loadAdvisorConfig).
+        if (!this.isConnected) {
+          this._advisorConfigDirty = true;
+          return;
+        }
         try {
           await setSessionAdvisorConfig(this.sessionKey, {
             enabled,
             model: this.advisorModel,
+            mode: this.advisorMode,
           });
         } catch (error) {
           const globalStore = useZeroStore();
@@ -339,10 +399,16 @@ export function useZeroSessionStore(key) {
        */
       async setAdvisorModel(model) {
         this.advisorModel = model;
+        saveAdvisorPreferences({ model, mode: this.advisorMode });
+        if (!this.isConnected) {
+          this._advisorConfigDirty = true;
+          return;
+        }
         try {
           await setSessionAdvisorConfig(this.sessionKey, {
             enabled: this.advisorEnabled,
             model,
+            mode: this.advisorMode,
           });
         } catch (error) {
           const globalStore = useZeroStore();
@@ -351,13 +417,69 @@ export function useZeroSessionStore(key) {
       },
 
       /**
-       * Load advisor config for this session from the backend.
+       * Set the advisor trigger mode ("max" = proactive/broad, "low" =
+       * restrictive, StepFun-style) for this session.
+       * @param {"max" | "low"} mode
+       */
+      async setAdvisorMode(mode) {
+        this.advisorMode = mode;
+        saveAdvisorPreferences({ model: this.advisorModel, mode });
+        if (!this.isConnected) {
+          this._advisorConfigDirty = true;
+          return;
+        }
+        try {
+          await setSessionAdvisorConfig(this.sessionKey, {
+            enabled: this.advisorEnabled,
+            model: this.advisorModel,
+            mode,
+          });
+        } catch (error) {
+          const globalStore = useZeroStore();
+          globalStore.zeroError = error;
+        }
+      },
+
+      /**
+       * Syncs advisor config with the backend right after this session
+       * connects. If the user toggled advisor before the session had a
+       * live process (_advisorConfigDirty), that explicit local choice
+       * wins - it's pushed to the backend. Otherwise, this panel hasn't
+       * expressed an opinion yet, so it loads whatever the freshly
+       * registered backend session defaulted to (the global config) - EXCEPT
+       * model/mode, which stay whatever localStorage seeded them to: a
+       * brand-new session's backend config is always the bare
+       * {model: null, mode: "max"} default, and blindly adopting that would
+       * clobber the user's remembered choice with nothing every time. Model
+       * uses `??` since null is the backend's genuine "no opinion" value;
+       * mode has no such sentinel (it's always "max" or "low"), so it's only
+       * adopted when the backend config is actually enabled - i.e. a
+       * resumed/already-configured session with a real opinion, not a fresh
+       * default.
        */
       async _loadAdvisorConfig() {
+        if (this._advisorConfigDirty) {
+          this._advisorConfigDirty = false;
+          try {
+            await setSessionAdvisorConfig(this.sessionKey, {
+              enabled: this.advisorEnabled,
+              model: this.advisorModel,
+              mode: this.advisorMode,
+            });
+          } catch {
+            // Best-effort - the toggle already reflects the user's intent
+            // locally; a failed push here just means the backend won't
+            // honor it this turn.
+          }
+          return;
+        }
         try {
           const config = await getSessionAdvisorConfig(this.sessionKey);
           this.advisorEnabled = config.enabled;
-          this.advisorModel = config.model;
+          this.advisorModel = config.model ?? this.advisorModel;
+          if (config.enabled) {
+            this.advisorMode = config.mode || this.advisorMode;
+          }
         } catch {
           // Session might not have a config yet, use defaults
         }

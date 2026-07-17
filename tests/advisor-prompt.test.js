@@ -36,11 +36,46 @@ assert(typeof enabledNoModel === "string", "returns string when enabled");
 assert(enabledNoModel.includes("<advisor_mode>"), "contains advisor_mode tag");
 assert(enabledNoModel.includes("Task"), "mentions Task tool");
 assert(enabledNoModel.includes("advisor"), "mentions advisor specialist");
-assert(!enabledNoModel.includes("modelo recomendado"), "no model hint when model is null");
+assert(enabledNoModel.includes("JÁ EXISTE"), "tells the executor the specialist already exists");
+assert(enabledNoModel.includes("GenerateSpecialist"), "warns against (re)creating the specialist");
+assert(enabledNoModel.includes("PROATIVAMENTE"), "tells the executor to consult on its own initiative");
+assert(
+  enabledNoModel.includes("Não espere o usuário pedir"),
+  "makes explicit that no explicit user request is needed",
+);
+assert(enabledNoModel.includes("Seja eficiente"), "includes efficiency guidance");
+assert(
+  enabledNoModel.includes("Não consulte para tarefas triviais"),
+  "warns against consulting for trivial tasks",
+);
 
+// The model lives in the specialist file's own frontmatter (synced before
+// this prompt is built), not in the prompt text - the executor never needs
+// it, and repeating it here risks going stale relative to the file.
 const enabledWithModel = executorInstructionPrompt({ enabled: true, model: "claude-opus-4-1" });
-assert(enabledWithModel.includes("claude-opus-4-1"), "contains model name");
-assert(enabledWithModel.includes("modelo recomendado"), "contains model hint label");
+assert(!enabledWithModel.includes("claude-opus-4-1"), "does not repeat the configured model in the prompt");
+
+// --- executorInstructionPrompt: mode (max/low) ---
+console.log("\nexecutorInstructionPrompt (mode):");
+
+const defaultModePrompt = executorInstructionPrompt({ enabled: true, model: null });
+assert(defaultModePrompt.includes("modo Max"), "missing/unrecognized mode defaults to max");
+
+const maxModePrompt = executorInstructionPrompt({ enabled: true, model: null, mode: "max" });
+assert(maxModePrompt.includes("Segurança e boas práticas"), "max mode lists the five broad categories");
+assert(maxModePrompt.includes("PROATIVAMENTE"), "max mode keeps the proactive framing");
+
+const lowModePrompt = executorInstructionPrompt({ enabled: true, model: null, mode: "low" });
+assert(lowModePrompt.includes("modo Low"), "low mode is labeled");
+assert(lowModePrompt.includes("Planejamento inicial de alto risco"), "low mode has the planning trigger");
+assert(lowModePrompt.includes("Recuperação de falha repetida"), "low mode has the failure-recovery trigger");
+assert(
+  !lowModePrompt.includes("Segurança e boas práticas"),
+  "low mode does not repeat max mode's broad categories",
+);
+assert(lowModePrompt.includes("\"name\": \"advisor\""), "low mode still explains the Task call shape");
+assert(lowModePrompt.includes("JÁ EXISTE"), "low mode still warns the specialist already exists");
+assert(maxModePrompt !== lowModePrompt, "max and low mode prompts differ");
 
 // --- isAdvisorConsultation ---
 console.log("\nisAdvisorConsultation:");

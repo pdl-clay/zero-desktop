@@ -1,7 +1,7 @@
 <template>
   <div class="session-indicator" :class="rootClass" :style="rootStyle">
     <span v-if="state === 'idle'" class="session-indicator__idle" aria-hidden="true">
-      <Icon icon="mdi:chat-outline" :width="size" :height="size" />
+      <Icon icon="fluent:chat-20-regular" :width="size" :height="size" />
     </span>
     <span v-else-if="state === 'thinking'" class="session-indicator__pulse" aria-hidden="true" />
     <span v-else-if="state === 'writing'" class="session-indicator__bars" aria-hidden="true">

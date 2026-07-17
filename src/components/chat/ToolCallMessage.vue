@@ -238,39 +238,10 @@ function onCopy() {
 </script>
 
 <style scoped>
-.tool-call-card {
-  border-radius: 6px;
-  border: 1px solid var(--chat-card-border);
-  background: var(--chat-card-bg);
-  transition:
-    border-color 0.3s ease,
-    background 0.3s ease;
-}
-.tool-name {
-  color: var(--chat-text);
-}
-.tool-call-card--running {
-  border-color: rgba(33, 150, 243, 0.25);
-  background: rgba(33, 150, 243, 0.04);
-}
-.tool-call-card--dark.tool-call-card--running {
-  border-color: rgba(33, 150, 243, 0.18);
-  background: rgba(33, 150, 243, 0.03);
-}
-.tool-call-card--error {
-  border-color: rgba(244, 67, 54, 0.25);
-  background: rgba(244, 67, 54, 0.03);
-}
-.tool-input-preview {
-  margin: 0;
-  font-size: 0.78em;
-  white-space: pre-wrap;
-  word-break: break-all;
-  color: inherit;
-}
-.tool-result-body {
-  border-top: 1px solid var(--chat-card-border);
-}
+/* .tool-call-card, .tool-name, .tool-call-card--running/--error,
+   .tool-input-preview, .tool-result-body: shared "collapsible tool card"
+   chrome, moved to src/css/app.scss (global) so AdvisorConsultation.vue can
+   reuse it - see that file for why. */
 .tool-result-content {
   margin: 0;
   font-size: 0.82em;

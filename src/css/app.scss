@@ -19,6 +19,46 @@ body.body--dark {
   --chat-card-border: rgba(255, 255, 255, 0.12);
 }
 
+// Shared "collapsible tool card" chrome - the header row (status icon, name,
+// expand/copy buttons) and body wrapper every card of this family uses.
+// Global (not scoped to ToolCallMessage.vue) so AdvisorConsultation.vue can
+// reuse the exact same classes instead of re-declaring this chrome, so an
+// advisor consultation reads as the same family of cards as a regular tool
+// call rather than a one-off design.
+.tool-call-card {
+  border-radius: 6px;
+  border: 1px solid var(--chat-card-border);
+  background: var(--chat-card-bg);
+  transition:
+    border-color 0.3s ease,
+    background 0.3s ease;
+}
+.tool-name {
+  color: var(--chat-text);
+}
+.tool-call-card--running {
+  border-color: rgba(33, 150, 243, 0.25);
+  background: rgba(33, 150, 243, 0.04);
+}
+.tool-call-card--dark.tool-call-card--running {
+  border-color: rgba(33, 150, 243, 0.18);
+  background: rgba(33, 150, 243, 0.03);
+}
+.tool-call-card--error {
+  border-color: rgba(244, 67, 54, 0.25);
+  background: rgba(244, 67, 54, 0.03);
+}
+.tool-input-preview {
+  margin: 0;
+  font-size: 0.78em;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: inherit;
+}
+.tool-result-body {
+  border-top: 1px solid var(--chat-card-border);
+}
+
 // Markdown rendering for chat messages (assistant/system text, tool call
 // input/output). Content is injected via v-html so these rules must stay
 // global (unscoped) to reach it from TextMessage.vue / ToolCallMessage.vue.

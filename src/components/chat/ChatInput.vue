@@ -78,127 +78,110 @@
         />
         <span class="chat-input__mode-label">{{ permissionModeLabel }}</span>
       </button>
-      <button
-        type="button"
-        class="chat-input__mode"
-        :class="{
-          'chat-input__mode--active': sessionStore.advisorEnabled,
-          'chat-input__mode--collapsed': isNarrowViewport,
-        }"
-        :disabled="disabled"
-        @click="toggleAdvisorMode"
-      >
-        <q-icon :name="sessionStore.advisorEnabled ? 'auto_awesome' : 'auto_awesome'" size="14px" />
-        <span class="chat-input__mode-label">{{ advisorModeLabel }}</span>
-      </button>
-      <div class="chat-input__model-wrap">
-        <button
-          type="button"
-          class="chat-input__model"
+      <div class="chat-input__advisor-wrap">
+        <div
+          class="chat-input__advisor-pill"
           :class="{
-            'chat-input__model--active': effectiveActiveModel,
-            'chat-input__model--collapsed': isNarrowViewport,
+            'chat-input__advisor-pill--active': sessionStore.advisorEnabled,
+            'chat-input__advisor-pill--collapsed': isNarrowViewport,
           }"
-          :disabled="disabled"
-          @click="toggleModelMenu"
         >
-          <q-icon name="memory" size="14px" />
-          <span class="chat-input__model-label">{{
-            effectiveActiveModel || t("chat.modelLabel")
-          }}</span>
-          <q-icon
-            name="expand_more"
-            size="14px"
-            class="chat-input__model-chevron"
-            :class="{ 'chat-input__model-chevron--open': modelMenuOpen }"
-          />
-        </button>
+          <button
+            type="button"
+            class="chat-input__advisor-toggle"
+            :disabled="disabled"
+            @click="toggleAdvisorMode"
+          >
+            <q-icon name="auto_awesome" size="14px" />
+            <span class="chat-input__advisor-toggle-label">{{ advisorModeLabel }}</span>
+          </button>
+          <template v-if="sessionStore.advisorEnabled">
+            <div class="chat-input__advisor-divider" />
+            <button
+              type="button"
+              class="chat-input__advisor-gear"
+              :disabled="disabled"
+              @click="toggleAdvisorSettings"
+            >
+              <q-icon name="settings" size="13px" />
+              <q-tooltip>{{ t("chat.advisorSettings") }}</q-tooltip>
+            </button>
+          </template>
+        </div>
         <transition name="chat-input__model-fade">
           <div
-            v-if="modelMenuOpen"
-            v-click-outside="closeModelMenu"
-            class="chat-input__model-dropdown"
+            v-if="advisorSettingsOpen"
+            v-click-outside="closeAdvisorSettings"
+            class="chat-input__advisor-settings-popup"
           >
-            <div class="chat-input__model-header row items-center justify-between">
-              <span>{{ t("chat.switchModel") }}</span>
-              <q-icon name="memory" size="14px" color="grey-6" />
-            </div>
+            <div class="chat-input__model-header">{{ t("chat.advisorSettingsTitle") }}</div>
             <div class="chat-input__model-separator" />
-            <div class="chat-input__model-search">
-              <q-icon name="search" size="14px" color="grey-6" class="q-mr-sm" />
-              <input
-                v-model="modelSearch"
-                type="text"
-                :placeholder="t('chat.searchModel')"
-                class="chat-input__model-search-input"
-                @click.stop
+            <div class="chat-input__advisor-settings-row">
+              <span class="chat-input__advisor-settings-label">{{
+                t("chat.executorModelLabel")
+              }}</span>
+              <ModelPickerDropdown
+                :model-value="effectiveActiveModel"
+                :placeholder-label="t('chat.modelLabel')"
+                :disabled="disabled"
+                show-recents
+                recents-storage-key="zero-recent-models"
+                @update:model-value="selectModel"
               />
             </div>
-            <div v-if="recentModels.length && !modelSearch" class="chat-input__model-section">
-              <div class="chat-input__model-section-title">
-                {{ t("chat.recentModels") }}
-              </div>
-              <ul class="chat-input__model-list chat-input__model-list--recent">
-                <li
-                  v-for="m in recentModels"
-                  :key="`recent-${m}`"
-                  :class="[
-                    'chat-input__model-item',
-                    { 'chat-input__model-item--active': m === effectiveActiveModel },
-                  ]"
-                  @click="selectModel(m)"
-                >
-                  <span class="chat-input__model-item-avatar">
-                    <q-icon
-                      v-if="m === effectiveActiveModel"
-                      name="check_circle"
-                      size="18px"
-                      color="primary"
-                    />
-                    <q-icon v-else name="history" size="18px" color="grey-6" />
-                  </span>
-                  <span class="chat-input__model-name">{{ m }}</span>
-                </li>
-              </ul>
-              <div class="chat-input__model-separator" />
+            <div class="chat-input__advisor-settings-row">
+              <span class="chat-input__advisor-settings-label">{{
+                t("chat.advisorModelLabel")
+              }}</span>
+              <ModelPickerDropdown
+                :model-value="sessionStore.advisorModel"
+                :placeholder-label="t('chat.advisorModelDefault')"
+                :title="t('chat.advisorModelLabel')"
+                :disabled="disabled"
+                allow-clear
+                @update:model-value="selectAdvisorModel"
+              />
             </div>
-            <ul ref="modelListRef" class="chat-input__model-list">
-              <li
-                v-for="m in filteredModels"
-                :key="m"
-                :class="[
-                  'chat-input__model-item',
-                  { 'chat-input__model-item--active': m === effectiveActiveModel },
+            <div class="chat-input__advisor-settings-row">
+              <span class="chat-input__advisor-settings-label">{{
+                t("chat.advisorTriggerModeLabel")
+              }}</span>
+              <q-btn-toggle
+                :model-value="sessionStore.advisorMode"
+                dense
+                unelevated
+                no-caps
+                toggle-color="primary"
+                size="sm"
+                :disabled="disabled"
+                :options="[
+                  { label: t('chat.advisorModeMax'), value: 'max' },
+                  { label: t('chat.advisorModeLow'), value: 'low' },
                 ]"
-                @click="selectModel(m)"
+                @update:model-value="selectAdvisorMode"
               >
-                <span class="chat-input__model-item-avatar">
-                  <q-icon
-                    v-if="m === effectiveActiveModel"
-                    name="check_circle"
-                    size="18px"
-                    color="primary"
-                  />
-                  <q-icon v-else name="radio_button_unchecked" size="18px" color="grey-6" />
-                </span>
-                <span class="chat-input__model-name">{{ m }}</span>
-              </li>
-              <li v-if="zeroStore.isLoadingModels" class="chat-input__model-status">
-                <span class="chat-input__model-item-avatar">
-                  <q-spinner-dots size="18px" color="primary" />
-                </span>
-                <span>{{ t("chat.loadingModels") }}</span>
-              </li>
-              <li v-else-if="filteredModels.length === 0" class="chat-input__model-status">
-                <span class="chat-input__model-item-avatar">
-                  <q-icon name="search_off" size="18px" color="grey-6" />
-                </span>
-                <span>{{ t("chat.noModelsMatch") }}</span>
-              </li>
-            </ul>
+                <q-tooltip anchor="top middle" self="bottom middle">
+                  {{
+                    sessionStore.advisorMode === "low"
+                      ? t("chat.advisorModeLowTooltip")
+                      : t("chat.advisorModeMaxTooltip")
+                  }}
+                </q-tooltip>
+              </q-btn-toggle>
+            </div>
           </div>
         </transition>
       </div>
+      <ModelPickerDropdown
+        v-if="!sessionStore.advisorEnabled"
+        :model-value="effectiveActiveModel"
+        :placeholder-label="t('chat.modelLabel')"
+        :disabled="disabled"
+        :collapsed="isNarrowViewport"
+        show-recents
+        recents-storage-key="zero-recent-models"
+        @update:model-value="selectModel"
+      />
       <textarea
         ref="textareaRef"
         v-model="localValue"
@@ -239,6 +222,8 @@ import { readFileAttachment } from "@/services/zero";
 import { base64ToObjectUrl, base64ToDataUri } from "@/utils/image";
 import { isImageMimeType, isTextMimeType, getFileIcon } from "@/utils/file";
 import { useZeroStore } from "@/stores/zero-store";
+import { vClickOutside } from "@/utils/click-outside";
+import ModelPickerDropdown from "@/components/chat/ModelPickerDropdown.vue";
 
 const props = defineProps({
   modelValue: { type: String, default: "" },
@@ -267,12 +252,8 @@ const attachedFile = computed({
   },
 });
 const pickingFile = ref(false);
-const modelMenuOpen = ref(false);
-const modelSearch = ref("");
-const modelListRef = ref(null);
+const advisorSettingsOpen = ref(false);
 
-const MAX_RECENT_MODELS = 3;
-const recentModelsKey = "zero-recent-models";
 const permissionModeKey = "zero-permission-mode";
 
 const paneWidth = inject("paneWidth", ref(9999));
@@ -296,17 +277,6 @@ const advisorModeLabel = computed(() =>
 // Falls back to the global store's model only for a panel that hasn't
 // connected yet, so it shows the default it would inherit if it did.
 const effectiveActiveModel = computed(() => sessionStore.activeModel || zeroStore.activeModel);
-
-const recentModels = computed(() => {
-  const active = effectiveActiveModel.value;
-  const recent = JSON.parse(localStorage.getItem(recentModelsKey) || "[]").filter(
-    (m) => typeof m === "string" && zeroStore.availableModels.includes(m) && m !== active,
-  );
-  if (active && zeroStore.availableModels.includes(active)) {
-    return [active, ...recent.filter((m) => m !== active)].slice(0, MAX_RECENT_MODELS);
-  }
-  return recent.slice(0, MAX_RECENT_MODELS);
-});
 
 // Load eagerly on mount instead of only on first click of the model picker,
 // so the menu is already populated by the time the user opens it - the
@@ -363,20 +333,6 @@ const statusLabel = computed(() => {
     return `${status.toolName} ${t("chat.toolRunning")}`;
   }
   return null;
-});
-
-const filteredModels = computed(() => {
-  const query = modelSearch.value.trim().toLowerCase();
-  const active = effectiveActiveModel.value;
-  const recent = recentModels.value;
-  let list = zeroStore.availableModels.filter((m) => !recent.includes(m));
-  if (query) {
-    list = list.filter((m) => m.toLowerCase().includes(query));
-  }
-  if (active && list.includes(active)) {
-    list = [active, ...list.filter((m) => m !== active)];
-  }
-  return list;
 });
 
 const statusClass = computed(() => {
@@ -530,55 +486,35 @@ function togglePermissionMode() {
 function toggleAdvisorMode() {
   const nextEnabled = !sessionStore.advisorEnabled;
   sessionStore.toggleAdvisor(nextEnabled);
-}
-
-async function openModelMenu() {
-  modelMenuOpen.value = true;
-  await zeroStore.loadAvailableModels();
-}
-
-function toggleModelMenu() {
-  if (modelMenuOpen.value) {
-    modelMenuOpen.value = false;
-  } else {
-    openModelMenu();
+  if (!nextEnabled) {
+    // The gear that opens the settings popup only renders while advisor mode
+    // is on (see template) - closing here avoids leaving the popup stranded
+    // open with no button left to close it via toggleAdvisorSettings.
+    advisorSettingsOpen.value = false;
   }
 }
 
-function closeModelMenu() {
-  modelMenuOpen.value = false;
-  modelSearch.value = "";
+function toggleAdvisorSettings() {
+  advisorSettingsOpen.value = !advisorSettingsOpen.value;
+}
+
+function closeAdvisorSettings() {
+  advisorSettingsOpen.value = false;
 }
 
 function selectModel(model) {
   sessionStore.switchModel(model);
-  rememberRecentModel(model);
-  closeModelMenu();
 }
 
-function rememberRecentModel(model) {
-  const recent = JSON.parse(localStorage.getItem(recentModelsKey) || "[]").filter(
-    (m) => typeof m === "string" && m !== model,
-  );
-  recent.unshift(model);
-  localStorage.setItem(recentModelsKey, JSON.stringify(recent.slice(0, MAX_RECENT_MODELS)));
+function selectAdvisorModel(model) {
+  sessionStore.setAdvisorModel(model);
+}
+
+function selectAdvisorMode(mode) {
+  sessionStore.setAdvisorMode(mode);
 }
 
 defineExpose({ focus: () => textareaRef.value?.focus() });
-
-const vClickOutside = {
-  mounted(el, binding) {
-    el._clickOutside = (event) => {
-      if (!(el === event.target || el.contains(event.target))) {
-        binding.value();
-      }
-    };
-    document.addEventListener("click", el._clickOutside, true);
-  },
-  unmounted(el) {
-    document.removeEventListener("click", el._clickOutside, true);
-  },
-};
 </script>
 
 <style scoped>
@@ -947,166 +883,6 @@ const vClickOutside = {
     margin 0.35s ease;
 }
 
-.chat-input__model {
-  flex-shrink: 0;
-  height: 34px;
-  width: auto;
-  max-width: 180px;
-  padding: 0 8px 0 10px;
-  border-radius: 17px;
-  border: 1px solid rgba(128, 128, 128, 0.22);
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  background: transparent;
-  color: rgba(128, 128, 128, 0.9);
-  cursor: pointer;
-  font-size: 0.82em;
-  font-weight: 500;
-  transition:
-    background 0.15s ease,
-    border-color 0.15s ease,
-    color 0.15s ease,
-    transform 0.1s ease,
-    width 0.5s ease,
-    max-width 0.5s ease,
-    padding 0.5s ease;
-}
-
-.chat-input__model:hover:not(:disabled) {
-  background: rgba(128, 128, 128, 0.08);
-  border-color: rgba(128, 128, 128, 0.32);
-}
-
-.chat-input__model:active:not(:disabled) {
-  transform: scale(0.97);
-}
-
-.chat-input__model:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.chat-input__model--active {
-  color: rgba(128, 128, 128, 0.9);
-  border-color: rgba(128, 128, 128, 0.35);
-  background: rgba(128, 128, 128, 0.08);
-}
-
-.chat-input__model--active:hover:not(:disabled) {
-  background: rgba(128, 128, 128, 0.12);
-  border-color: rgba(128, 128, 128, 0.45);
-}
-
-.chat-input__model--collapsed {
-  width: 34px;
-  max-width: 34px;
-  padding: 0;
-  justify-content: center;
-}
-
-.chat-input__model--collapsed .chat-input__model-label,
-.chat-input__model--collapsed .chat-input__model-chevron {
-  max-width: 0;
-  opacity: 0;
-  margin-left: -5px;
-}
-
-.chat-input__model--collapsed:hover:not(:disabled) {
-  width: auto;
-  max-width: 180px;
-  padding: 0 8px 0 10px;
-  justify-content: flex-start;
-}
-
-.chat-input__model--collapsed:hover:not(:disabled) .chat-input__model-label {
-  max-width: 110px;
-  opacity: 1;
-  margin-left: 0;
-}
-
-.chat-input__model--collapsed:hover:not(:disabled) .chat-input__model-chevron {
-  max-width: 14px;
-  opacity: 1;
-  margin-left: 0;
-}
-
-.chat-input__model-label {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 110px;
-  line-height: 1.3;
-  opacity: 1;
-  transition:
-    max-width 0.5s ease,
-    opacity 0.35s ease,
-    margin 0.35s ease;
-}
-
-.chat-input__model-chevron {
-  transition:
-    transform 0.2s ease,
-    max-width 0.5s ease,
-    opacity 0.35s ease,
-    margin 0.35s ease;
-}
-
-.chat-input__model-chevron--open {
-  transform: rotate(180deg);
-}
-
-.chat-input__model-wrap {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-}
-
-.chat-input__model-dropdown {
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 0;
-  z-index: 6000;
-  min-width: 240px;
-  max-width: 340px;
-  max-height: 320px;
-  display: flex;
-  flex-direction: column;
-  padding: 6px 0;
-  border-radius: 12px;
-  background: rgba(30, 30, 30, 0.5);
-  border: 1px solid rgba(128, 128, 128, 0.18);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
-  overflow: hidden;
-}
-
-.chat-input__model-search {
-  display: flex;
-  align-items: center;
-  margin: 4px 12px 6px;
-  padding: 6px 10px;
-  border-radius: 8px;
-  background: rgba(128, 128, 128, 0.12);
-  border: 1px solid rgba(128, 128, 128, 0.18);
-}
-
-.chat-input__model-search-input {
-  flex: 1;
-  min-width: 0;
-  border: none;
-  outline: none;
-  background: transparent;
-  color: var(--chat-text);
-  font-size: 0.85em;
-  line-height: 1.3;
-}
-
-.chat-input__model-search-input::placeholder {
-  color: rgba(128, 128, 128, 0.7);
-}
-
 .chat-input__model-fade-enter-active,
 .chat-input__model-fade-leave-active {
   transition:
@@ -1135,59 +911,166 @@ const vClickOutside = {
   background: rgba(128, 128, 128, 0.18);
 }
 
-.chat-input__model-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  min-width: 220px;
-  max-width: 320px;
-  max-height: 220px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-
-.chat-input__model-item {
-  display: flex;
-  align-items: center;
-  min-height: 40px;
-  padding: 6px 12px;
-  margin: 2px 8px;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: background 0.12s ease;
-}
-
-.chat-input__model-item:hover {
-  background: rgba(128, 128, 128, 0.12);
-}
-
-.chat-input__model-item--active {
-  background: rgba(25, 118, 210, 0.1);
-}
-
-.chat-input__model-item-avatar {
+/* One cohesive pill (border/background/radius live here) housing both the
+   toggle and the gear as borderless sub-buttons, rather than two separate
+   pill/circle buttons crammed next to each other. */
+/* Positioning context only (no border/background/overflow here) - the
+   settings popup below is an absolutely-positioned child of THIS element,
+   not of .chat-input__advisor-pill, so the pill's own overflow: hidden
+   (needed to clip the toggle/divider/gear to its rounded corners) can't
+   also clip the popup. */
+.chat-input__advisor-wrap {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  min-width: 28px;
-  padding-right: 8px;
 }
 
-.chat-input__model-name {
-  font-size: 0.86em;
+/* Same border/radius/height/hover/active treatment as .chat-input__mode
+   (the permission-mode pill right next to it), so the two read as one
+   family of controls instead of a one-off design. */
+.chat-input__advisor-pill {
+  flex-shrink: 0;
+  height: 34px;
+  display: inline-flex;
+  align-items: stretch;
+  border-radius: 17px;
+  border: 1px solid rgba(128, 128, 128, 0.22);
+  background: transparent;
+  overflow: hidden;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.chat-input__advisor-pill:hover {
+  background: rgba(128, 128, 128, 0.08);
+  border-color: rgba(128, 128, 128, 0.32);
+}
+
+.chat-input__advisor-pill--active {
+  color: var(--q-primary, #1976d2);
+  border-color: rgba(25, 118, 210, 0.35);
+  background: rgba(25, 118, 210, 0.06);
+}
+
+.chat-input__advisor-pill--active:hover {
+  background: rgba(25, 118, 210, 0.12);
+  border-color: rgba(25, 118, 210, 0.45);
+}
+
+.chat-input__advisor-toggle {
+  flex-shrink: 0;
+  height: 100%;
+  padding: 0 8px 0 10px;
+  border: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 0.82em;
+  font-weight: 500;
+  transition: padding 0.35s ease;
+}
+
+.chat-input__advisor-toggle:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.chat-input__advisor-toggle-label {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  max-width: 90px;
+  line-height: 1.3;
+  opacity: 1;
+  transition:
+    max-width 0.35s ease,
+    opacity 0.25s ease,
+    margin 0.25s ease;
 }
 
-.chat-input__model-status {
+.chat-input__advisor-pill--collapsed .chat-input__advisor-toggle {
+  padding: 0 6px 0 10px;
+}
+
+.chat-input__advisor-pill--collapsed .chat-input__advisor-toggle-label {
+  max-width: 0;
+  opacity: 0;
+  margin-left: -5px;
+}
+
+.chat-input__advisor-divider {
+  flex-shrink: 0;
+  width: 1px;
+  margin: 7px 0;
+  background: rgba(128, 128, 128, 0.22);
+}
+
+.chat-input__advisor-pill--active .chat-input__advisor-divider {
+  background: rgba(25, 118, 210, 0.25);
+}
+
+.chat-input__advisor-gear {
+  flex-shrink: 0;
+  height: 100%;
+  width: 30px;
+  border: none;
   display: flex;
   align-items: center;
-  min-height: 40px;
-  padding: 6px 12px;
-  margin: 2px 8px;
+  justify-content: center;
+  background: transparent;
+  color: rgba(128, 128, 128, 0.75);
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.chat-input__advisor-pill--active .chat-input__advisor-gear {
+  color: inherit;
+}
+
+.chat-input__advisor-gear:hover:not(:disabled) {
+  background: rgba(128, 128, 128, 0.14);
+  color: rgba(128, 128, 128, 0.95);
+}
+
+.chat-input__advisor-gear:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.chat-input__advisor-settings-popup {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 6000;
+  min-width: 260px;
+  display: flex;
+  flex-direction: column;
+  padding: 6px 0 12px;
+  border-radius: 12px;
+  background: rgba(30, 30, 30, 0.5);
+  border: 1px solid rgba(128, 128, 128, 0.18);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+
+.chat-input__advisor-settings-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 16px;
+}
+
+.chat-input__advisor-settings-label {
+  font-size: 0.75em;
+  font-weight: 600;
   color: var(--chat-text-muted, rgba(128, 128, 128, 0.8));
-  font-size: 0.85em;
 }
 
 .chat-input__attach {
