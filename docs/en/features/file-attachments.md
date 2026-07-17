@@ -4,12 +4,13 @@ This document describes how zero-desktop handles file attachments — images and
 
 ## Overview
 
-Users can attach files to messages via a native file dialog. Supported types include:
+Users can attach **any file** to a message via a native file dialog — there is no extension allowlist on either side (frontend dialog or backend). Every file is classified into one of three kinds:
 
 - **Images**: png, jpg/jpeg, gif, webp — sent to the agent as ACP image content blocks so the model can see them.
-- **Text/code files**: txt, md, csv, json, yaml/yml, xml, html/htm, css, js, ts, jsx, tsx, py, go, rs, java, kt, swift, c, cpp/cc/cxx/h/hpp, rb, php, sh, sql, dockerfile — sent as text content blocks wrapped in an `<attached file>` tag so the agent can read their contents.
+- **Text/code files**: a curated extension list (txt, md, csv, json, yaml/yml, xml, html/htm, css, js, ts, jsx, tsx, py, go, rs, java, kt, swift, c, cpp/cc/cxx/h/hpp, rb, php, sh, sql, dockerfile) plus, for anything else, a content sniff (valid UTF-8, no null byte) — this is what makes extensionless project files (`Dockerfile`, `Makefile`, `.gitignore`, `.env`, lockfiles) and unrecognized-but-plain-text extensions attach correctly. Sent as text content blocks wrapped in an `<attached file>` tag so the agent can read their contents.
+- **Binary**: anything that's neither a recognized image nor text-like content (PDFs, archives, office documents, executables, ...). Still attached and shown in the composer like any other file, but since no ACP content block can carry raw binary bytes to the model, it's sent as a named reference (`<attached file name="..." type="...">[binary file - content not included]</attached file>`) rather than inlined content — the agent knows a file was attached, just not what's inside it.
 
-Files are limited to **10 MB**. Binary files (null bytes in content) that happen to have a text extension are rejected.
+Files are limited to **10 MB**; that's the only remaining rejection (a size cap, unrelated to type).
 
 ## Data Flow
 
@@ -25,10 +26,10 @@ Files are limited to **10 MB**. Binary files (null bytes in content) that happen
 ┌──────────────▼───────────────┐
 │  Rust: read_file_attachment   │
 │    → check file size ≤ 10MB   │
-│    → detect kind by extension │
+│    → detect kind: extension,  │
+│      then content sniff,      │
+│      never rejects            │
 │    → read bytes               │
-│    → validate (no binary in   │
-│      text files)              │
 │    → base64-encode            │
 │    → return FileAttachment    │
 └──────────────┬───────────────┘
@@ -46,10 +47,14 @@ Files are limited to **10 MB**. Binary files (null bytes in content) that happen
 ┌──────────────▼───────────────┐
 │  Rust: ZeroBridge::send       │
 │    → build_prompt_blocks()    │
-│      image → {type:"image",   │
+│      image  → {type:"image",  │
 │        mimeType, data}        │
-│      text  → {type:"text",    │
+│      text   → {type:"text",   │
 │        text:"<attached file>"}│
+│      binary → {type:"text",   │
+│        text:"<attached file   │
+│        ...content not         │
+│        included>"}            │
 │    → session/prompt via ACP   │
 │    → append user message to   │
 │      local history (with file)│
@@ -66,12 +71,15 @@ Tauri command: read_file_attachment(path: String) → FileAttachment
 
 **Steps:**
 
-1. **Check size**: Reads file metadata (`tokio::fs::metadata`). Files over `MAX_FILE_BYTES` (10 MB) are rejected with a human-readable error showing the actual size.
-2. **Detect kind**: `attachment_kind_from_extension()` maps the file extension to `AttachmentKind::Image` or `AttachmentKind::Text` with the corresponding MIME type. Unknown extensions are rejected.
-3. **Read bytes**: Reads the entire file into memory via `tokio::fs::read`.
-4. **Validate text**: For text files, checks if the content contains null bytes (`bytes.contains(&0)`). If so, rejects as binary data.
-5. **Encode**: Base64-encodes the bytes using the `base64` crate (standard engine, no padding variations).
-6. **Extract name**: Takes the file name from the path (e.g. `screenshot.png`).
+1. **Check size**: Reads file metadata (`tokio::fs::metadata`). Files over `MAX_FILE_BYTES` (10 MB) are rejected with a human-readable error showing the actual size. This is the only remaining rejection — nothing is rejected by type.
+2. **Read bytes**: Reads the entire file into memory via `tokio::fs::read`.
+3. **Detect kind**: `attachment_kind_for_file(path, bytes)` (never fails) decides `AttachmentKind::Image` / `Text` / `Binary` plus a MIME type:
+   - A recognized image/text extension (`attachment_kind_from_extension`) wins outright — unless it's a "text" extension whose content actually contains a null byte, in which case it's downgraded to `Binary` (a `.txt` that's secretly binary shouldn't be force-decoded as UTF-8).
+   - Otherwise a recognized binary/document extension (`binary_mime_for`: pdf, zip, gz/tgz, doc/docx, xls/xlsx, ppt/pptx) wins by extension alone — deliberately checked _before_ sniffing bytes, since e.g. a PDF's leading bytes (`%PDF-1.4...`) are valid ASCII and would otherwise be misclassified as text.
+   - Otherwise, content is sniffed: valid UTF-8 with no null byte → `Text` (`text/plain`) — this is what makes extensionless files (`Dockerfile`, `.gitignore`, `.env`, lockfiles) and unrecognized-but-plain-text extensions attach as readable text.
+   - Anything left → `Binary` (`application/octet-stream`).
+4. **Encode**: Base64-encodes the bytes using the `base64` crate (standard engine, no padding variations).
+5. **Extract name**: Takes the file name from the path (e.g. `screenshot.png`).
 
 **FileAttachment struct:**
 
@@ -85,14 +93,17 @@ pub struct FileAttachment {
 }
 ```
 
-### Supported extensions (in `attachment_kind_from_extension`)
+### Curated extensions (in `attachment_kind_from_extension` / `binary_mime_for`)
 
-| Kind  | Extensions                                                                                                                                               |
-| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Image | png, jpg, jpeg, gif, webp                                                                                                                                |
-| Text  | txt, md, csv, json, yaml, yml, xml, html, htm, css, js, ts, jsx, tsx, py, go, rs, java, kt, swift, c, cpp, cc, cxx, h, hpp, rb, php, sh, sql, dockerfile |
+These extensions get an exact, specific MIME type. Everything else falls through to content sniffing (see above) rather than being rejected.
 
-The MIME type for text/code files uses `text/x-<language>` for most languages (e.g. `text/x-python`, `text/x-rust`), with standard types for well-known formats (`text/markdown`, `text/csv`, `application/json`, etc.).
+| Kind   | Extensions                                                                                                                                               |
+| ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Image  | png, jpg, jpeg, gif, webp                                                                                                                                |
+| Text   | txt, md, csv, json, yaml, yml, xml, html, htm, css, js, ts, jsx, tsx, py, go, rs, java, kt, swift, c, cpp, cc, cxx, h, hpp, rb, php, sh, sql, dockerfile |
+| Binary | pdf, zip, gz, tgz, doc, docx, xls, xlsx, ppt, pptx                                                                                                       |
+
+The MIME type for text/code files uses `text/x-<language>` for most languages (e.g. `text/x-python`, `text/x-rust`), with standard types for well-known formats (`text/markdown`, `text/csv`, `application/json`, etc.). Binary extensions get their real document MIME type (e.g. `application/pdf`); anything unrecognized falls back to `application/octet-stream`.
 
 ### Prompt block building (`bridge.rs`)
 
@@ -105,7 +116,7 @@ fn build_prompt_blocks(content: &str, file: Option<&FileAttachment>) -> Vec<serd
 **Rules:**
 
 1. If `content` is non-empty, a `{"type": "text", "text": content}` block is added first.
-2. If a file is attached and its MIME type is recognized:
+2. If a file is attached, `attachment_kind_from_mime()` (never `None` - defaults to `Binary`) decides how:
    - **Image** (`image/*`): `{"type": "image", "mimeType": "...", "data": "..."}`
    - **Text** (`text/*`, `application/json`, `application/yaml`, `application/xml`): the base64 data is decoded to UTF-8 and wrapped in an `<attached file>` XML tag:
      ```json
@@ -114,8 +125,15 @@ fn build_prompt_blocks(content: &str, file: Option<&FileAttachment>) -> Vec<serd
        "text": "<attached file name=\"notes.md\" type=\"text/markdown\">\n...content...\n</attached file>"
      }
      ```
+   - **Binary** (anything else - PDFs, archives, office documents, ...): there is no ACP content block that can carry raw binary bytes, so instead of silently dropping the attachment, a text block names it without inlining content:
+     ```json
+     {
+       "type": "text",
+       "text": "<attached file name=\"report.pdf\" type=\"application/pdf\">\n[binary file - content not included]\n</attached file>"
+     }
+     ```
 
-The `attachment_kind_from_mime()` helper on the Rust side (in `bridge.rs`) mirrors `attachment_kind_from_extension()` but works from the already-resolved MIME type at send time, so the same file is correctly routed to the right ACP block type.
+`attachment_kind_from_mime()` on the Rust side (in `bridge.rs`) mirrors the Rust-side `AttachmentKind` classification but works from the already-resolved MIME type at send time, so the same file is correctly routed to the right ACP block type.
 
 ### History persistence
 
@@ -154,11 +172,11 @@ Returns a `FileAttachment` object (`{ mimeType, data, name }`).
 ### `ChatInput.vue` — Attach flow
 
 1. User clicks the attach button (paperclip icon).
-2. Native file dialog opens (`@tauri-apps/plugin-dialog`), filtered to supported extensions.
+2. Native file dialog opens (`@tauri-apps/plugin-dialog`) with no `filters` — every file is selectable, not just a curated extension list.
 3. On file selection, `readFileAttachment(path)` is called.
 4. The frontend renders a preview based on MIME type:
    - **Image**: thumbnail using `base64ToObjectUrl()` from `src/utils/image.js` — converts base64 to a `blob:` URL to avoid bloating Vue's reactive state and DOM attributes with multi-MB base64 strings.
-   - **Text/code**: file chip showing the icon (from `getFileIcon()` in `src/utils/file.js`), file name, and MIME type.
+   - **Text/code/binary**: file chip showing the icon (from `getFileIcon()` in `src/utils/file.js`, defaulting to a generic file icon for anything unrecognized), file name, and MIME type. The chip doesn't need to know whether the content is readable text or opaque binary - `read_file_attachment` never fails by type, so this rendering path is unchanged either way.
 5. A remove button (✕) lets the user detach the file before sending.
 6. On send, the attachment is passed to `sendZeroMessage(key, content, file)` — `key` routes it to the correct session's process.
 
@@ -189,6 +207,7 @@ When replaying a session from history, `buildMessagesFromHistory` — a per-sess
 - **No drag-and-drop**: Files must be selected via the native dialog. Browser drag-and-drop APIs don't apply in a Tauri webview context.
 - **Single file per message**: The ACP `session/prompt` interface accepts multiple content blocks, but the current UI only supports one attachment per message.
 - **No streaming attachment read**: The entire file is read into memory before encoding. For the 10 MB limit this is acceptable; larger files would need a different approach.
+- **Binary content isn't actually readable by the agent**: attaching a PDF, zip, or other binary file always succeeds, but the agent only ever sees its name and MIME type, not its content - there is no PDF/archive extraction on this path (unlike, say, the agent's own file-reading tools, which are a separate mechanism). This is a deliberate "attach anything, degrade honestly" tradeoff rather than pretending to support content it can't extract.
 
 ## References
 

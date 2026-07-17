@@ -120,41 +120,56 @@ fn build_prompt_blocks(content: &str, file: Option<&FileAttachment>) -> Vec<serd
         blocks.push(serde_json::json!({ "type": "text", "text": content }));
     }
     if let Some(file) = file {
-        if let Some(kind) = attachment_kind_from_mime(&file.mime_type) {
-            match kind {
-                AttachmentKind::Image => {
+        match attachment_kind_from_mime(&file.mime_type) {
+            AttachmentKind::Image => {
+                blocks.push(serde_json::json!({
+                    "type": "image",
+                    "mimeType": file.mime_type,
+                    "data": file.data,
+                }));
+            }
+            AttachmentKind::Text => {
+                if let Ok(text) = base64_decode_to_string(&file.data) {
                     blocks.push(serde_json::json!({
-                        "type": "image",
-                        "mimeType": file.mime_type,
-                        "data": file.data,
+                        "type": "text",
+                        "text": format!("<attached file name=\"{}\" type=\"{}\">\n{}\n</attached file>",
+                            file.name, file.mime_type, text),
                     }));
                 }
-                AttachmentKind::Text => {
-                    if let Ok(text) = base64_decode_to_string(&file.data) {
-                        blocks.push(serde_json::json!({
-                            "type": "text",
-                            "text": format!("<attached file name=\"{}\" type=\"{}\">\n{}\n</attached file>",
-                                file.name, file.mime_type, text),
-                        }));
-                    }
-                }
+            }
+            AttachmentKind::Binary => {
+                // No content block type lets us hand raw binary bytes to the
+                // model - the file is still attached (the user picked it and
+                // sees it in the composer), but the agent only learns it
+                // exists, not what's inside. Better than silently vanishing
+                // from the prompt, which is what happened before this kind
+                // existed (attachment_kind_from_mime used to return None for
+                // anything non-image/non-text, and this whole `if let` was
+                // skipped).
+                blocks.push(serde_json::json!({
+                    "type": "text",
+                    "text": format!(
+                        "<attached file name=\"{}\" type=\"{}\">\n[binary file - content not included]\n</attached file>",
+                        file.name, file.mime_type,
+                    ),
+                }));
             }
         }
     }
     blocks
 }
 
-fn attachment_kind_from_mime(mime_type: &str) -> Option<AttachmentKind> {
+fn attachment_kind_from_mime(mime_type: &str) -> AttachmentKind {
     if mime_type.starts_with("image/") {
-        Some(AttachmentKind::Image)
+        AttachmentKind::Image
     } else if mime_type.starts_with("text/")
         || mime_type == "application/json"
         || mime_type == "application/yaml"
         || mime_type == "application/xml"
     {
-        Some(AttachmentKind::Text)
+        AttachmentKind::Text
     } else {
-        None
+        AttachmentKind::Binary
     }
 }
 
@@ -211,6 +226,15 @@ fn translate_session_update(params: &serde_json::Value) -> Option<OutputEvent> {
             let entries = update.get("entries").cloned().unwrap_or(serde_json::json!([]));
             Some(OutputEvent::new("plan_update", serde_json::json!({ "entries": entries })))
         }
+        "_zero/spec_review_required" => Some(OutputEvent::new(
+            "spec_review_required",
+            serde_json::json!({
+                "specId": update["specId"].as_str().unwrap_or(""),
+                "title": update["title"].as_str().unwrap_or(""),
+                "filePath": update["filePath"].as_str().unwrap_or(""),
+                "relativePath": update["relativePath"].as_str().unwrap_or(""),
+            }),
+        )),
         _ => None,
     }
 }
@@ -427,11 +451,186 @@ pub fn remove_session_model(session_id: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// zero-desktop's own record of each session's reasoning-effort preference,
+/// keyed by session id - same rationale as session-models.json: nothing in
+/// the ACP protocol reports the current effort back, so this is the only way
+/// to reapply the user's choice after a respawn (see the reapply block next
+/// to the model one in spawn_and_handshake). Absent from the map means
+/// "auto" - no entry is written for that case.
+fn effort_map_path() -> Result<PathBuf, String> {
+    let base = dirs::data_dir().ok_or_else(|| "Could not resolve app data directory".to_string())?;
+    Ok(base.join("zero-desktop").join("session-reasoning-effort.json"))
+}
+
+static EFFORT_FILE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn load_effort_map() -> HashMap<String, String> {
+    let Ok(path) = effort_map_path() else {
+        return HashMap::new();
+    };
+    let Ok(content) = std::fs::read_to_string(&path) else {
+        return HashMap::new();
+    };
+    serde_json::from_str(&content).unwrap_or_default()
+}
+
+fn save_effort_map(map: &HashMap<String, String>) -> Result<(), String> {
+    let path = effort_map_path()?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let content = serde_json::to_string_pretty(map).map_err(|e| e.to_string())?;
+    std::fs::write(&path, content).map_err(|e| e.to_string())
+}
+
+pub fn get_session_effort(session_id: &str) -> Option<String> {
+    load_effort_map().get(session_id).cloned()
+}
+
+pub fn set_session_effort(session_id: &str, effort: &str) -> Result<(), String> {
+    let _lock = EFFORT_FILE_LOCK.lock().map_err(|e| e.to_string())?;
+    let mut map = load_effort_map();
+    if effort.is_empty() {
+        map.remove(session_id);
+    } else {
+        map.insert(session_id.to_string(), effort.to_string());
+    }
+    save_effort_map(&map)
+}
+
+pub fn remove_session_effort(session_id: &str) -> Result<(), String> {
+    let _lock = EFFORT_FILE_LOCK.lock().map_err(|e| e.to_string())?;
+    let mut map = load_effort_map();
+    if map.remove(session_id).is_some() {
+        save_effort_map(&map)?;
+    }
+    Ok(())
+}
+
+/// zero-desktop's own record of each session's ACP permission mode ("auto" |
+/// "ask" | "spec-draft" - Plan Mode) and, while one is awaiting a decision,
+/// the spec it drafted. Needed for the same reason the model map is: every
+/// freshly (re)spawned `zero acp` process registers its session pinned to
+/// `PermissionModeAuto` (see `registerSession` in my-zero's
+/// internal/acp/agent.go) - the engine itself has no memory of a session
+/// having been in spec-draft, so a mode switch here would otherwise be lost
+/// across any crash/respawn, and a plan awaiting review would vanish if the
+/// app is closed before the user decides. Persisted (not just held in the
+/// live `AcpSession`) so both survive a full app restart, not only a process
+/// respawn.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SessionPlanState {
+    #[serde(default = "default_plan_mode")]
+    pub mode: String,
+    #[serde(rename = "pendingSpec", skip_serializing_if = "Option::is_none", default)]
+    pub pending_spec: Option<PendingSpec>,
+}
+
+impl Default for SessionPlanState {
+    fn default() -> Self {
+        Self { mode: default_plan_mode(), pending_spec: None }
+    }
+}
+
+fn default_plan_mode() -> String {
+    "auto".to_string()
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingSpec {
+    pub spec_id: String,
+    pub title: String,
+    pub file_path: String,
+    pub relative_path: String,
+}
+
+fn plan_state_path() -> Result<PathBuf, String> {
+    let base = dirs::data_dir().ok_or_else(|| "Could not resolve app data directory".to_string())?;
+    Ok(base.join("zero-desktop").join("session-plan-state.json"))
+}
+
+static PLAN_STATE_FILE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn load_plan_state_map() -> HashMap<String, SessionPlanState> {
+    let Ok(path) = plan_state_path() else {
+        return HashMap::new();
+    };
+    let Ok(content) = std::fs::read_to_string(&path) else {
+        return HashMap::new();
+    };
+    serde_json::from_str(&content).unwrap_or_default()
+}
+
+fn save_plan_state_map(map: &HashMap<String, SessionPlanState>) -> Result<(), String> {
+    let path = plan_state_path()?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let content = serde_json::to_string_pretty(map).map_err(|e| e.to_string())?;
+    std::fs::write(&path, content).map_err(|e| e.to_string())
+}
+
+pub fn get_session_plan_state(session_id: &str) -> Option<SessionPlanState> {
+    load_plan_state_map().get(session_id).cloned()
+}
+
+pub fn set_session_mode(session_id: &str, mode: &str) -> Result<(), String> {
+    let _lock = PLAN_STATE_FILE_LOCK.lock().map_err(|e| e.to_string())?;
+    let mut map = load_plan_state_map();
+    map.entry(session_id.to_string()).or_default().mode = mode.to_string();
+    save_plan_state_map(&map)
+}
+
+pub fn set_pending_spec(session_id: &str, spec: PendingSpec) -> Result<(), String> {
+    let _lock = PLAN_STATE_FILE_LOCK.lock().map_err(|e| e.to_string())?;
+    let mut map = load_plan_state_map();
+    map.entry(session_id.to_string()).or_default().pending_spec = Some(spec);
+    save_plan_state_map(&map)
+}
+
+pub fn clear_pending_spec(session_id: &str) -> Result<(), String> {
+    let _lock = PLAN_STATE_FILE_LOCK.lock().map_err(|e| e.to_string())?;
+    let mut map = load_plan_state_map();
+    if let Some(entry) = map.get_mut(session_id) {
+        entry.pending_spec = None;
+        return save_plan_state_map(&map);
+    }
+    Ok(())
+}
+
+pub fn remove_session_plan_state(session_id: &str) -> Result<(), String> {
+    let _lock = PLAN_STATE_FILE_LOCK.lock().map_err(|e| e.to_string())?;
+    let mut map = load_plan_state_map();
+    if map.remove(session_id).is_some() {
+        save_plan_state_map(&map)?;
+    }
+    Ok(())
+}
+
+/// A model's reasoning-effort capability, sourced from `zero providers models
+/// --json`'s `reasoning`/`reasoningEfforts` fields (see internal/cli/
+/// provider_models.go in the zero CLI). `reasoning_efforts` is empty when the
+/// model doesn't support discrete effort tiers - the frontend hides the
+/// effort selector in that case, mirroring how the TUI's /effort picker only
+/// offers "auto" for such models.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ModelCapabilityInfo {
+    pub reasoning: bool,
+    #[serde(rename = "reasoningEfforts")]
+    pub reasoning_efforts: Vec<String>,
+}
+
 /// The active provider's live model list, for the model picker.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct AvailableModels {
     pub models: Vec<String>,
     pub active: String,
+    /// Additive, keyed by model id - `models` itself stays a plain string
+    /// list so existing consumers (model picker filtering/recents) don't
+    /// need to change shape.
+    #[serde(default)]
+    pub capabilities: HashMap<String, ModelCapabilityInfo>,
 }
 
 /// Active provider's `name` and `model` via `zero config --json`. `name`
@@ -500,16 +699,27 @@ pub async fn fetch_available_models() -> Result<AvailableModels, String> {
 
     let value: serde_json::Value = serde_json::from_slice(&output.stdout)
         .map_err(|e| format!("Failed to parse providers models JSON: {e}"))?;
-    let models = value["models"]
-        .as_array()
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|m| m["id"].as_str().map(|s| s.to_string()))
-                .collect()
-        })
-        .unwrap_or_default();
+    let empty = Vec::new();
+    let entries = value["models"].as_array().unwrap_or(&empty);
+    let models: Vec<String> = entries
+        .iter()
+        .filter_map(|m| m["id"].as_str().map(|s| s.to_string()))
+        .collect();
+    let mut capabilities = HashMap::new();
+    for entry in entries {
+        let Some(id) = entry["id"].as_str() else { continue };
+        let reasoning = entry["reasoning"].as_bool().unwrap_or(false);
+        if !reasoning {
+            continue;
+        }
+        let reasoning_efforts = entry["reasoningEfforts"]
+            .as_array()
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .unwrap_or_default();
+        capabilities.insert(id.to_string(), ModelCapabilityInfo { reasoning, reasoning_efforts });
+    }
 
-    Ok(AvailableModels { models, active: active_model })
+    Ok(AvailableModels { models, active: active_model, capabilities })
 }
 
 /// Appends the advisor-mode instruction (if enabled) to `content`, for use
@@ -743,6 +953,43 @@ impl ZeroBridge {
             let _ = set_session_model(&session_id, &model_id);
         }
 
+        // Same respawn-reapply need as the model block above: a session whose
+        // reasoning-effort was set via `_zero/set_effort` (see
+        // `ZeroBridge::switch_session_effort`) must have that choice restored
+        // after every handshake, or a fresh `zero acp` process silently falls
+        // back to "auto". Absent from the map simply means "auto" - no
+        // fallback snapshot needed, unlike the model block above.
+        if let Some(desired_effort) = get_session_effort(&session_id) {
+            if let Err(e) = peer
+                .request(
+                    "_zero/set_effort",
+                    serde_json::json!({ "sessionId": session_id, "effort": desired_effort }),
+                )
+                .await
+            {
+                log::warn!("[bridge] failed to reapply session effort '{desired_effort}' after respawn: {e}");
+            }
+        }
+
+        // Same respawn-reapply need as the model block above, gated to
+        // spec-draft only: "auto"/"ask" don't need reapplying - "auto" is
+        // already registerSession's own default for a brand-new Go-side
+        // session, and "ask" is never something we must silently restore
+        // after a crash (only a still-pending plan review matters enough to
+        // survive one, and that lives in spec-draft while awaiting a
+        // decision).
+        if get_session_plan_state(&session_id).map(|s| s.mode).as_deref() == Some("spec-draft") {
+            if let Err(e) = peer
+                .request(
+                    "session/set_mode",
+                    serde_json::json!({ "sessionId": session_id, "modeId": "spec-draft" }),
+                )
+                .await
+            {
+                log::warn!("[bridge] failed to reapply spec-draft mode after respawn: {e}");
+            }
+        }
+
         Ok((child, peer, session_id))
     }
 
@@ -783,6 +1030,7 @@ impl ZeroBridge {
     ) {
         let app = self.app.clone();
         let pending_permissions = self.pending_permissions.clone();
+        let sessions = self.sessions.clone();
 
         tokio::spawn(async move {
             let mut lines = BufReader::new(stdout).lines();
@@ -854,6 +1102,34 @@ impl ZeroBridge {
                                     }
                                 } else {
                                     pending_thinking.clear();
+                                }
+                            }
+                            // Not appended to chat history (unlike the arm above) -
+                            // the durable record is the .zero/specs/*.md file plus
+                            // this session-plan-state.json entry; submit_spec's own
+                            // tool_call/tool_call_update (emitted separately by the
+                            // engine regardless) already leaves a normal trace in
+                            // the replayed transcript. Persisted here, keyed by the
+                            // stable session_id (only session_key is in scope in
+                            // this reader, resolved via the shared sessions map) so
+                            // it survives a respawn or a full app restart, not just
+                            // this in-memory turn - see SessionPlanState.
+                            "_zero/spec_review_required" => {
+                                if let Some(ref e) = event {
+                                    let session_id = sessions
+                                        .lock()
+                                        .await
+                                        .get(&session_key)
+                                        .map(|s| s.session_id.clone());
+                                    if let Some(session_id) = session_id {
+                                        let spec = PendingSpec {
+                                            spec_id: e.payload["specId"].as_str().unwrap_or("").to_string(),
+                                            title: e.payload["title"].as_str().unwrap_or("").to_string(),
+                                            file_path: e.payload["filePath"].as_str().unwrap_or("").to_string(),
+                                            relative_path: e.payload["relativePath"].as_str().unwrap_or("").to_string(),
+                                        };
+                                        let _ = set_pending_spec(&session_id, spec);
+                                    }
                                 }
                             }
                             _ => {}
@@ -1189,6 +1465,66 @@ impl ZeroBridge {
         set_session_model(&session_id, &model)
     }
 
+    /// Switch this session's reasoning-effort preference in place via
+    /// `_zero/set_effort`. Mirrors switch_session_model exactly: per-session,
+    /// takes effect on the next turn, no kill/respawn. If the session has no
+    /// live process right now, the choice is only persisted to
+    /// `session-reasoning-effort.json` and gets re-applied automatically the
+    /// next time this session spawns (see the reapply block in
+    /// `spawn_and_handshake`). `effort` is `""` for "auto".
+    pub async fn switch_session_effort(&self, key: String, effort: String) -> Result<(), String> {
+        let sessions = self.sessions.lock().await;
+        let Some(s) = sessions.get(&key) else {
+            return Err(format!("No active session for key: {key}"));
+        };
+        let session_id = s.session_id.clone();
+        let live_peer = s.live.as_ref().map(|live| live.peer.clone());
+        drop(sessions);
+
+        if let Some(peer) = live_peer {
+            peer.request(
+                "_zero/set_effort",
+                serde_json::json!({ "sessionId": session_id, "effort": effort }),
+            )
+            .await
+            .map_err(|e| format!("_zero/set_effort failed: {e}"))?;
+        }
+
+        set_session_effort(&session_id, &effort)
+    }
+
+    /// Switch this session's ACP permission mode in place via
+    /// `session/set_mode` ("auto" | "ask" | "spec-draft" - Plan Mode, the
+    /// ACP-native equivalent of Claude Code's ExitPlanMode). Live - no
+    /// kill/respawn needed, unlike model switching: `handleSetMode` on the Go
+    /// side mutates the already-running session object directly. If there's
+    /// no live process right now, the choice is only persisted to
+    /// `session-plan-state.json` and gets re-applied automatically next
+    /// spawn (see the reapply block in `spawn_and_handshake`) - though in
+    /// practice a disconnected session should go through
+    /// `set_zero_session_mode_by_id` instead, since this method requires a
+    /// registered `key` entry to resolve the session id from.
+    pub async fn switch_session_mode(&self, key: String, mode: String) -> Result<(), String> {
+        let sessions = self.sessions.lock().await;
+        let Some(s) = sessions.get(&key) else {
+            return Err(format!("No active session for key: {key}"));
+        };
+        let session_id = s.session_id.clone();
+        let live_peer = s.live.as_ref().map(|live| live.peer.clone());
+        drop(sessions);
+
+        if let Some(peer) = live_peer {
+            peer.request(
+                "session/set_mode",
+                serde_json::json!({ "sessionId": session_id, "modeId": mode }),
+            )
+            .await
+            .map_err(|e| format!("session/set_mode failed: {e}"))?;
+        }
+
+        set_session_mode(&session_id, &mode)
+    }
+
     /// Retorna o advisor config para uma sessão específica.
     pub async fn get_advisor_config(&self, key: &str) -> Option<crate::advisor::AdvisorConfig> {
         let sessions = self.sessions.lock().await;
@@ -1354,6 +1690,28 @@ mod tests {
     }
 
     #[test]
+    fn test_translate_spec_review_required() {
+        let params = serde_json::json!({
+            "update": {
+                "sessionUpdate": "_zero/spec_review_required",
+                "specId": "2026-07-17-add-foo",
+                "title": "Add foo",
+                "filePath": "/home/user/project/.zero/specs/2026-07-17-add-foo.md",
+                "relativePath": ".zero/specs/2026-07-17-add-foo.md"
+            }
+        });
+        let event = translate_session_update(&params).unwrap();
+        assert_eq!(event.event_type, "spec_review_required");
+        assert_eq!(event.payload["specId"], "2026-07-17-add-foo");
+        assert_eq!(event.payload["title"], "Add foo");
+        assert_eq!(
+            event.payload["filePath"],
+            "/home/user/project/.zero/specs/2026-07-17-add-foo.md"
+        );
+        assert_eq!(event.payload["relativePath"], ".zero/specs/2026-07-17-add-foo.md");
+    }
+
+    #[test]
     fn test_translate_unknown_update_kind_ignored() {
         let params = serde_json::json!({ "update": { "sessionUpdate": "totally_unknown_kind" } });
         assert!(translate_session_update(&params).is_none());
@@ -1430,6 +1788,26 @@ mod tests {
         assert_eq!(blocks.len(), 2);
         assert_eq!(blocks[0]["type"], "text");
         assert_eq!(blocks[1]["type"], "image");
+    }
+
+    #[test]
+    fn test_build_prompt_blocks_binary_attachment_becomes_named_reference() {
+        // A genuinely binary, non-image attachment (e.g. a PDF or zip) can't
+        // be inlined as either an image or text content block - it still
+        // must produce SOME block referencing it by name, not silently
+        // vanish from the prompt.
+        let file = FileAttachment {
+            mime_type: "application/pdf".to_string(),
+            data: "JVBERi0xLjQK".to_string(),
+            name: "report.pdf".to_string(),
+        };
+        let blocks = build_prompt_blocks("check this out", Some(&file));
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0]["type"], "text");
+        assert_eq!(blocks[1]["type"], "text");
+        let attached_text = blocks[1]["text"].as_str().unwrap();
+        assert!(attached_text.contains("report.pdf"));
+        assert!(attached_text.contains("application/pdf"));
     }
 
     #[test]

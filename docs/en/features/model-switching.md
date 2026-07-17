@@ -113,7 +113,13 @@ This is stored in `~/.local/share/zero-desktop/session-models.json` (`{ sessionI
 | -------------------------------- | ------------------------------------------------------------------------------------------- |
 | `loadAvailableModels({ force })` | Calls `listZeroModels()`. Caches result in `_modelsLoaded`; pass `force: true` to re-fetch. |
 
-`switchModel(model)` itself is **not** an action on `zero-store.js` — since multi-session parallel chat (ADR 004), it lives on the per-session `zero-session-store.js` (`useZeroSessionStore(key)`). It guards against no-op (same model) and run-in-progress, calls `switchZeroModel(key, model)` to restart only that session's process, updates that session's own `activeModel`, and also updates the global store's `activeModel` so any panel that hasn't connected yet picks up the new default on its first connect.
+`switchModel(model)` itself is **not** an action on `zero-store.js` — since multi-session parallel chat (ADR 004), it lives on the per-session `zero-session-store.js` (`useZeroSessionStore(key)`). It guards against no-op (same model) and run-in-progress, then branches on connection state before touching the backend:
+
+- **Connected** (`isConnected`): calls `switchZeroModel(key, model)` to restart only that session's live process, exactly as before.
+- **Has a `sessionId` but isn't connected yet** (e.g. a session just reopened from history, before the user resumed it): `switch_zero_model`/`switch_session_model` require a `sessions` entry keyed by the panel's `key`, which the Rust bridge only registers once a session has actually connected at least once — calling it earlier used to throw `"No active session for key: <uuid>"`. Fixed by calling `set_zero_session_model_by_id(sessionId, model)` instead, a disk-only write (`bridge::set_session_model`) that requires no live registration. It's picked up automatically on the next connect via the same model-reapply block in `spawn_and_handshake` that already handles reconnects.
+- **Brand-new panel with no `sessionId` at all yet**: nothing is persisted synchronously; `this.activeModel` is still updated locally, and `_realignModelBeforeSend` (called from `sendMessage`, right after `startSession` connects) pushes it once a real session exists.
+
+In every case, `this.activeModel` (this panel's own choice) and the global store's `activeModel` (the default for panels that haven't connected yet) are updated immediately, regardless of which branch persists it.
 
 ### `ChatInput.vue` — Model Picker
 

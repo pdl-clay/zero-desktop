@@ -67,7 +67,7 @@ processos.
 A store monolítica `zero-store.js` foi dividida em:
 
 - **`zero-store.js`** (global): `zeroPath`, `availableModels`, `activeModel`,
-  `mcpBackends`, `mcpTools`, `permissionMode` — apenas estado app-wide.
+  `mcpBackends`, `mcpTools` — apenas estado app-wide.
 - **`zero-session-store.js`** (fábrica): `useZeroSessionStore(key)` cria uma
   store Pinia por sessão com `messages`, `currentResponse`, `runInProgress`,
   etc. Todos os listeners filtram por `sessionKey`.

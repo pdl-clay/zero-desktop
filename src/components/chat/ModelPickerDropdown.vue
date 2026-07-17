@@ -76,12 +76,7 @@
             @click="select(m)"
           >
             <span class="model-picker__item-avatar">
-              <q-icon
-                v-if="m === modelValue"
-                name="check_circle"
-                size="18px"
-                color="primary"
-              />
+              <q-icon v-if="m === modelValue" name="check_circle" size="18px" color="primary" />
               <q-icon v-else name="radio_button_unchecked" size="18px" color="grey-6" />
             </span>
             <span class="model-picker__name">{{ m }}</span>
@@ -273,25 +268,6 @@ function select(model) {
   max-width: 0;
   opacity: 0;
   margin-left: -5px;
-}
-
-.model-picker__button--collapsed:hover:not(:disabled) {
-  width: auto;
-  max-width: 180px;
-  padding: 0 8px 0 10px;
-  justify-content: flex-start;
-}
-
-.model-picker__button--collapsed:hover:not(:disabled) .model-picker__label {
-  max-width: 110px;
-  opacity: 1;
-  margin-left: 0;
-}
-
-.model-picker__button--collapsed:hover:not(:disabled) .model-picker__chevron {
-  max-width: 14px;
-  opacity: 1;
-  margin-left: 0;
 }
 
 .model-picker__label {

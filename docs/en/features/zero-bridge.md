@@ -148,7 +148,7 @@ And, via the dedicated `zero:permission-request` event, a real permission ask th
 The Pinia stores are split into three layers (see [ADR 004](../architecture/decisions/004-multi-session-parallel.md)):
 
 - **`zero-store.js`** (global, singleton) — `zeroPath`, `availableModels`,
-  `activeModel`, `mcpBackends`, `mcpTools`, `permissionMode`. App-wide state only.
+  `activeModel`, `mcpBackends`, `mcpTools`. App-wide state only.
 - **`zero-session-store.js`** (factory, `useZeroSessionStore(key)`) — per-session
   state: `messages[]`, `currentResponse`, `currentThinking`, `currentPlan`,
   `runInProgress`, listeners (filtered by `sessionKey`). Getters:

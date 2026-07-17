@@ -14,7 +14,7 @@
     <div
       class="col chat-messages-scroll q-pa-md"
       ref="messagesContainer"
-      style="padding-bottom: 84px"
+      :style="{ paddingBottom: `${messagesBottomPadding}px` }"
       @scroll="onScroll"
     >
       <!-- Loading session history -->
@@ -116,7 +116,12 @@
       <PlanPanel :plan="store.activePlan" />
     </div>
 
-    <div :class="['chat-input-bar q-pa-sm', $q.dark.isActive ? 'chat-input-bar--dark' : '']">
+    <PlanReviewDialog />
+
+    <div
+      ref="inputBarRef"
+      :class="['chat-input-bar q-pa-sm', $q.dark.isActive ? 'chat-input-bar--dark' : '']"
+    >
       <PendingPermissionPanel v-if="pendingPermission" :request="pendingPermission" />
       <ChatInput
         v-model="store.draftText"
@@ -149,8 +154,9 @@ import PendingPermissionPanel from "@/components/chat/PendingPermissionPanel.vue
 import ErrorMessage from "@/components/chat/ErrorMessage.vue";
 import ChatInput from "@/components/chat/ChatInput.vue";
 import PlanPanel from "@/components/chat/PlanPanel.vue";
+import PlanReviewDialog from "@/components/chat/PlanReviewDialog.vue";
 
-const PANE_NARROW_THRESHOLD = 500;
+const PANE_NARROW_THRESHOLD = 640;
 
 function permissionDecisionBadgeFrom(request) {
   // A recorded decision (status set from a live answer or a replayed
@@ -190,8 +196,22 @@ const globalStore = useZeroStore();
 const { locale } = useI18n();
 const messagesContainer = ref(null);
 const chatPageRef = ref(null);
+const inputBarRef = ref(null);
 const paneWidth = ref(9999);
 const isUserAtBottom = ref(true);
+// Matches the old hardcoded padding-bottom so the first paint (before the
+// ResizeObserver below reports a real measurement) looks the same as before.
+const inputBarHeight = ref(68);
+const GAP_ABOVE_INPUT_BAR = 16;
+
+// .chat-input-bar floats via position: absolute (see style block) so it
+// doesn't push page layout around as it grows - it grows upward instead
+// (plan checklist, attachment preview, status line, multi-line text all add
+// height above the textarea). Without this, the messages list's bottom
+// padding would stay fixed while the bar covers more and more of it. Tracking
+// the bar's real height and feeding it back as scroll padding keeps the last
+// message always visible above the bar, however tall it currently is.
+const messagesBottomPadding = computed(() => inputBarHeight.value + GAP_ABOVE_INPUT_BAR);
 
 provide("paneWidth", paneWidth);
 
@@ -212,7 +232,11 @@ const loadingSessionInfo = computed(() => {
 
 const canSend = computed(
   () =>
-    globalStore.hasZero && !store.isConnecting && !store.runInProgress && !pendingPermission.value,
+    globalStore.hasZero &&
+    !store.isConnecting &&
+    !store.runInProgress &&
+    !pendingPermission.value &&
+    !store.pendingPlanReview,
 );
 
 // Quasar's QPage defaults to `min-height`, which lets content grow past the
@@ -261,6 +285,14 @@ watch(
   },
 );
 
+// Growing the input bar (e.g. the plan checklist appearing) eats into the
+// scroll container's visible area exactly like a new message would - so a
+// user already pinned to the bottom should stay pinned instead of the newest
+// content sliding out from under the bar.
+watch(inputBarHeight, () => {
+  scrollToBottomIfNeeded();
+});
+
 async function onSend({ content, file }) {
   if (!canSend.value || (!content && !file)) return;
 
@@ -276,6 +308,7 @@ function onKeydown(event) {
 }
 
 let resizeObserver = null;
+let inputBarResizeObserver = null;
 
 onMounted(() => {
   window.addEventListener("keydown", onKeydown);
@@ -288,6 +321,17 @@ onMounted(() => {
     });
     resizeObserver.observe(el);
   }
+  if (inputBarRef.value && typeof ResizeObserver !== "undefined") {
+    inputBarResizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        // offsetHeight (border-box, padding included) rather than
+        // contentRect (content-box only) - what we need is how much space
+        // the bar actually occupies on screen, padding and all.
+        inputBarHeight.value = entry.target.offsetHeight;
+      }
+    });
+    inputBarResizeObserver.observe(inputBarRef.value);
+  }
 });
 
 onUnmounted(() => {
@@ -295,6 +339,10 @@ onUnmounted(() => {
   if (resizeObserver) {
     resizeObserver.disconnect();
     resizeObserver = null;
+  }
+  if (inputBarResizeObserver) {
+    inputBarResizeObserver.disconnect();
+    inputBarResizeObserver = null;
   }
 });
 </script>
@@ -308,6 +356,7 @@ onUnmounted(() => {
 .chat-messages-scroll {
   min-height: 0;
   overflow-y: auto;
+  transition: padding-bottom 0.15s ease;
 }
 
 /* Matches ChatInput's --status-writing accent, since both signal "zero is

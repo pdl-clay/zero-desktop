@@ -107,6 +107,25 @@ export const useSessionRuntimeStore = defineStore("session-runtime", {
       }
     },
 
+    // Shared tail of closePanel/stopAndDispose: if that was the workspace's
+    // last visible panel, open a fresh blank one so the workspace is never
+    // left without any panel at all - otherwise there'd be no "new session"
+    // affordance left to recover from (the button that opens one lives
+    // alongside the session list, not the empty panel area). Skipped when
+    // the removal came from a capacity overflow, to avoid looping.
+    async _replaceIfEmpty(workspacePath, replaceIfLast) {
+      if (!replaceIfLast || !workspacePath) return;
+      if (this.visibleKeys(workspacePath).length > 0) return;
+      const { openOrFocusSession } = await import("@/stores/session-runtime-store");
+      const newKey = crypto.randomUUID();
+      await openOrFocusSession(newKey, workspacePath, null);
+      // Tagged AFTER opening (registerMeta merges, so this survives the
+      // _syncRuntimeMeta patch prepareSession already applied) - marks it
+      // as disposable filler so openPanel replaces it instead of stacking
+      // a second panel the next time something real gets opened here.
+      this.registerMeta(newKey, { isBlankPlaceholder: true });
+    },
+
     // The panel's only close affordance. If a turn is actively running,
     // preserve it - just hide the panel, exactly like before. If it's idle,
     // also stop (and dispose) it outright: with only 4 concurrent slots and
@@ -134,20 +153,7 @@ export const useSessionRuntimeStore = defineStore("session-runtime", {
         store.$dispose();
         this._removeFromOpen(key);
       }
-      // Se o usuário fechou o último painel visível do workspace ativo,
-      // abre um novo painel vazio para que a área de trabalho nunca fique
-      // sem painel. Não fazemos isso quando o fechamento veio de estouro
-      // de capacidade, para evitar loop.
-      if (replaceIfLast && workspacePath && this.visibleKeys(workspacePath).length === 0) {
-        const { openOrFocusSession } = await import("@/stores/session-runtime-store");
-        const newKey = crypto.randomUUID();
-        await openOrFocusSession(newKey, workspacePath, null);
-        // Tagged AFTER opening (registerMeta merges, so this survives the
-        // _syncRuntimeMeta patch prepareSession already applied) - marks it
-        // as disposable filler so openPanel replaces it instead of stacking
-        // a second panel the next time something real gets opened here.
-        this.registerMeta(newKey, { isBlankPlaceholder: true });
-      }
+      await this._replaceIfEmpty(workspacePath, replaceIfLast);
     },
 
     focusPanel(key, workspacePath) {
@@ -159,14 +165,19 @@ export const useSessionRuntimeStore = defineStore("session-runtime", {
     // Unconditional stop, regardless of whether a turn is running - used
     // when the user deletes the underlying session entirely (see
     // MainLayout's onDeleteSession), never from the panel's own close
-    // button.
+    // button. Also backfills a blank panel if this was the workspace's last
+    // one open, same as closePanel - otherwise deleting the session that
+    // happens to be the sole open panel leaves the workspace panel-less
+    // with no button left to open a new one.
     async stopAndDispose(key) {
+      const workspacePath = this.keyMeta[key]?.cwd;
       const store = useZeroSessionStore(key);
       await store.stopSession();
       delete this.keyMeta[key];
       store.$reset();
       store.$dispose();
       this._removeFromOpen(key);
+      await this._replaceIfEmpty(workspacePath, true);
     },
   },
 });

@@ -68,7 +68,7 @@ export async function cancelZeroRun(key) {
 
 /**
  * List the active provider's live model list plus which one is active.
- * @returns {Promise<{ models: string[], active: string }>}
+ * @returns {Promise<{ models: string[], active: string, capabilities: Record<string, { reasoning: boolean, reasoningEfforts: string[] }> }>}
  */
 export async function listZeroModels() {
   return invoke("list_zero_models");
@@ -81,6 +81,89 @@ export async function listZeroModels() {
  */
 export async function switchZeroModel(key, model) {
   return invoke("switch_zero_model", { key, model });
+}
+
+/**
+ * Persist a session's model choice by session id directly, without
+ * requiring a live connection - for a panel that hasn't (re)connected yet.
+ * Picked up automatically the next time this session's process spawns.
+ * @param {string} sessionId
+ * @param {string} model
+ */
+export async function setSessionModelById(sessionId, model) {
+  return invoke("set_zero_session_model_by_id", { sessionId, model });
+}
+
+/**
+ * Switch this session's reasoning-effort preference. Live, no restart.
+ * @param {string} key - session key currently focused
+ * @param {string} effort - "" for auto, or a modelregistry ReasoningEffort value
+ */
+export async function switchZeroEffort(key, effort) {
+  return invoke("switch_zero_effort", { key, effort });
+}
+
+/**
+ * Persist a session's reasoning-effort choice by session id directly,
+ * without requiring a live connection - mirrors setSessionModelById.
+ * @param {string} sessionId
+ * @param {string} effort
+ */
+export async function setSessionEffortById(sessionId, effort) {
+  return invoke("set_zero_session_effort_by_id", { sessionId, effort });
+}
+
+/**
+ * Switch this session's ACP permission mode ("auto" | "ask" | "spec-draft")
+ * - the ACP-native equivalent of Claude Code's Plan Mode. Live, no restart.
+ * Requires the session to be connected; use `setSessionModeById` otherwise.
+ * @param {string} key - session key currently focused
+ * @param {"auto" | "ask" | "spec-draft"} mode
+ */
+export async function setSessionMode(key, mode) {
+  return invoke("switch_zero_mode", { key, mode });
+}
+
+/**
+ * Persist a session's mode by session id directly, without requiring a live
+ * connection - for a panel that hasn't (re)connected yet. Picked up
+ * automatically the next time this session's process spawns.
+ * @param {string} sessionId
+ * @param {"auto" | "ask" | "spec-draft"} mode
+ */
+export async function setSessionModeById(sessionId, mode) {
+  return invoke("set_zero_session_mode_by_id", { sessionId, mode });
+}
+
+/**
+ * Read a session's persisted plan state (mode + an eventual pending spec
+ * awaiting review). Pure disk read, no live session required - used to
+ * restore the Plan Mode toggle and review dialog on session recovery.
+ * @param {string} sessionId
+ * @returns {Promise<{ mode: string, pendingSpec: { specId: string, title: string, filePath: string, relativePath: string } | null } | null>}
+ */
+export async function getSessionPlanState(sessionId) {
+  return invoke("get_zero_session_plan_state", { sessionId });
+}
+
+/**
+ * Clear a session's pending spec review (after it's been approved or the
+ * user requested changes).
+ * @param {string} sessionId
+ */
+export async function clearPendingSpec(sessionId) {
+  return invoke("clear_zero_pending_spec", { sessionId });
+}
+
+/**
+ * Read a spec markdown file's content (the `filePath` from a
+ * `spec_review_required` event or a persisted `pendingSpec`) for the
+ * plan-review dialog.
+ * @param {string} path - absolute path
+ * @returns {Promise<string>}
+ */
+export async function readSpecFile(path) {
+  return invoke("read_spec_file", { path });
 }
 
 /**

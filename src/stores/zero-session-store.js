@@ -14,11 +14,20 @@ import {
   renameSession,
   respondToPermission as respondToPermissionApi,
   switchZeroModel,
+  setSessionModelById,
+  switchZeroEffort,
+  setSessionEffortById,
   getSessionAdvisorConfig,
   setSessionAdvisorConfig,
+  setSessionMode,
+  setSessionModeById,
+  getSessionPlanState,
+  clearPendingSpec,
+  readSpecFile,
 } from "@/services/zero";
 import { useSessionRuntimeStore } from "@/stores/session-runtime-store";
 import { useZeroStore } from "@/stores/zero-store";
+import { useWorkspacesStore } from "@/stores/workspaces-store";
 import { isEditTool } from "@/utils/edit-tools";
 import { isAdvisorConsultation, extractAdvisorPrompt } from "@/utils/advisor-prompt";
 
@@ -65,6 +74,28 @@ function saveAdvisorPreferences({ model, mode }) {
   }
 }
 
+// Same rationale as ADVISOR_PREFS_STORAGE_KEY above: there's no "last used
+// reasoning effort" concept on the backend (a genuinely new session always
+// starts at "" / auto), so a freshly created panel's effort selector should
+// still reflect the user's last choice instead of always starting at auto.
+const REASONING_EFFORT_STORAGE_KEY = "zero-reasoning-effort-preference";
+
+function loadReasoningEffortPreference() {
+  try {
+    return localStorage.getItem(REASONING_EFFORT_STORAGE_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+function saveReasoningEffortPreference(effort) {
+  try {
+    localStorage.setItem(REASONING_EFFORT_STORAGE_KEY, effort);
+  } catch {
+    // Best-effort, same rationale as saveAdvisorPreferences.
+  }
+}
+
 export function useZeroSessionStore(key) {
   return defineStore(`zero-session:${key}`, {
     state: () => ({
@@ -91,6 +122,24 @@ export function useZeroSessionStore(key) {
       // keeps whatever model it started with until it personally restarts,
       // so the picker must reflect that per panel, not one shared value.
       activeModel: null,
+      // This session's reasoning-effort preference ("" = auto). Seeded from
+      // the user's last choice (see loadReasoningEffortPreference) rather
+      // than always starting at auto - mirrors advisorModel/advisorMode
+      // above. Unlike activeModel, there's no meaningful "global default" to
+      // realign against before sending: reasoning effort is purely a
+      // per-session ACP override (_zero/set_effort), not mirrored into any
+      // shared CLI config file.
+      reasoningEffort: loadReasoningEffortPreference(),
+      // True when switchEffort was called before this session had a
+      // sessionId at all yet - mirrors _sessionModeDirty. Also starts true
+      // whenever a non-auto preference was seeded from localStorage above:
+      // unlike advisorModel/advisorMode (inert until advisorEnabled is
+      // explicitly turned on), reasoningEffort IS the live value the picker
+      // shows, so a seeded-but-never-pushed preference would otherwise leave
+      // the UI showing a tier the backend never actually received. Flushed
+      // (and cleared) by _flushReasoningEffortIfDirty once startSession gives
+      // this panel a real id.
+      _reasoningEffortDirty: loadReasoningEffortPreference() !== "",
       isConnected: false,
       isConnecting: false,
       messages: [],
@@ -123,16 +172,40 @@ export function useZeroSessionStore(key) {
       // overwriting it with whatever the freshly-registered backend
       // session defaulted to.
       _advisorConfigDirty: false,
+      // This session's live ACP permission mode: "auto" (run safe tools
+      // automatically, ask before risky ones), "ask" (ask before every tool
+      // that changes state), or "spec-draft" (Plan Mode - read-only
+      // exploration ending in a proposed implementation spec for review, the
+      // native equivalent of Claude Code's Plan Mode). All three are driven
+      // by the real ACP `session/set_mode`, enforced engine-side. Mirrors
+      // what the Rust bridge persists per session_id
+      // (session-plan-state.json) and re-applies across a crash/respawn -
+      // see setMode/_syncPlanStateFromDisk.
+      sessionMode: "auto",
+      // The spec awaiting the user's decision: { specId, title, filePath,
+      // relativePath, content }, or null. Populated either live (from a
+      // spec_review_required event) or restored from disk on reconnect.
+      pendingPlanReview: null,
+      // True when setMode was called before this session had a sessionId at
+      // all yet (brand-new, never-sent-a-message panel) - the only case with
+      // nowhere to persist the choice yet. Flushed by _syncPlanStateFromDisk
+      // once startSession gives this panel a real id.
+      _sessionModeDirty: false,
     }),
 
     getters: {
       workingStatus(state) {
         if (state.currentThinking) return "thinking";
         const runningTool = (state.messages || []).find(
-          (m) => (m.type === "tool_call" || m.type === "advisor_consultation") && m.status === "running",
+          (m) =>
+            (m.type === "tool_call" || m.type === "advisor_consultation") && m.status === "running",
         );
         if (runningTool) {
-          return { type: "tool", toolName: runningTool.type === "advisor_consultation" ? "advisor" : runningTool.toolName };
+          return {
+            type: "tool",
+            toolName:
+              runningTool.type === "advisor_consultation" ? "advisor" : runningTool.toolName,
+          };
         }
         if (state.currentResponse) return "writing";
         if (state.runInProgress) return "sending";
@@ -195,6 +268,8 @@ export function useZeroSessionStore(key) {
           this.currentResponse = "";
           this.currentThinking = "";
           this.currentPlan = [];
+          this.sessionMode = "auto";
+          this.pendingPlanReview = null;
         }
         this._syncRuntimeMeta();
       },
@@ -218,6 +293,21 @@ export function useZeroSessionStore(key) {
           this.currentResponse = "";
           this.currentThinking = "";
           this.currentPlan = [];
+          // Do NOT stomp sessionMode when a mode choice is still dirty (the
+          // user picked e.g. Plan Mode via the dropdown on a brand-new panel
+          // that had no sessionId yet - setMode had nowhere to persist to
+          // but this in-memory field, see setMode/_sessionModeDirty). This
+          // is the exact path sendMessage's lazy-connect takes for a first
+          // message: without this guard, this reset ran AFTER setMode but
+          // BEFORE _syncPlanStateFromDisk flushed the dirty choice, so it
+          // silently overwrote "spec-draft" back to "auto" right before
+          // pushing that (wrong) value to the engine - the mode picker
+          // would visibly flip back to Auto and the model never received
+          // the read-only/plan-drafting system prompt.
+          if (!this._sessionModeDirty) {
+            this.sessionMode = "auto";
+          }
+          this.pendingPlanReview = null;
           this._lastEventCount = 0;
         }
         this.cwd = cwd;
@@ -227,11 +317,22 @@ export function useZeroSessionStore(key) {
         this.runInProgress = false;
         this.lastStderrLines = [];
 
+        // No id was known before this call - this is a genuinely brand-new
+        // session (the common case: onNewSession's blank panel, lazily
+        // connected on its first sendMessage). The backend registers it in
+        // `zero sessions list` the moment session/new succeeds, but nothing
+        // else re-fetches the sidebar afterward - without this it only
+        // showed up once the user left the workspace and came back.
+        const isNewSession = !sessionId;
+
         try {
           await this.setupListeners();
           const result = await startZeroSession(this.sessionKey, cwd, sessionId);
           this.sessionId = result.sessionId;
           this.isConnected = true;
+          if (isNewSession) {
+            useWorkspacesStore().loadSessions(cwd);
+          }
           // A freshly (re)spawned process picks up whatever the CLI's
           // global model config currently is - snapshot it here so this
           // panel's picker reflects what it's actually running, even if
@@ -243,6 +344,10 @@ export function useZeroSessionStore(key) {
           this._startSessionSync();
           // Load advisor config for this session
           await this._loadAdvisorConfig();
+          // Restore (or push a pre-connection choice for) Plan Mode
+          await this._syncPlanStateFromDisk();
+          // Push a reasoning-effort choice made before this session connected
+          await this._flushReasoningEffortIfDirty();
         } catch (error) {
           const globalStore = useZeroStore();
           const errorMsg = String(error);
@@ -350,17 +455,68 @@ export function useZeroSessionStore(key) {
       // compare against and display for THIS panel.
       async switchModel(model) {
         if (model === this.activeModel || this.runInProgress) return;
+        this.activeModel = model;
+        // Also updates the global "default" so any panel that hasn't
+        // connected yet (and will snapshot from it on first connect)
+        // picks up the new choice going forward.
+        const globalStore = useZeroStore();
+        globalStore.activeModel = model;
         try {
-          await switchZeroModel(this.sessionKey, model);
-          this.activeModel = model;
-          // Also updates the global "default" so any panel that hasn't
-          // connected yet (and will snapshot from it on first connect)
-          // picks up the new choice going forward.
-          const globalStore = useZeroStore();
-          globalStore.activeModel = model;
+          if (this.isConnected) {
+            await switchZeroModel(this.sessionKey, model);
+          } else if (this.sessionId) {
+            // A session exists (e.g. reopened from history) but hasn't
+            // (re)connected yet - switch_zero_model requires a live
+            // `sessions` entry keyed by this panel, which only exists once
+            // connected at least once; calling it here throws "No active
+            // session for key: ...". Persist by session id instead - picked
+            // up automatically on next connect (see the model-reapply block
+            // in spawn_and_handshake). If the user sends a message before
+            // that, _realignModelBeforeSend covers the gap too.
+            await setSessionModelById(this.sessionId, model);
+          }
+          // Else: a brand-new panel with no sessionId yet - nothing to
+          // persist to. _realignModelBeforeSend (called from sendMessage,
+          // right after startSession connects) pushes this.activeModel once
+          // a real session exists.
+        } catch (error) {
+          globalStore.zeroError = error;
+        }
+      },
+
+      // Switches this session's reasoning-effort preference. Three-way
+      // branch mirrors switchModel exactly, minus the global-config-realign
+      // concern: effort has no shared CLI config file to keep in sync with,
+      // just this session's own ACP-side override.
+      async switchEffort(effort) {
+        if (effort === this.reasoningEffort || this.runInProgress) return;
+        this.reasoningEffort = effort;
+        saveReasoningEffortPreference(effort);
+        try {
+          if (this.isConnected) {
+            await switchZeroEffort(this.sessionKey, effort);
+          } else if (this.sessionId) {
+            await setSessionEffortById(this.sessionId, effort);
+          } else {
+            this._reasoningEffortDirty = true;
+          }
         } catch (error) {
           const globalStore = useZeroStore();
           globalStore.zeroError = error;
+        }
+      },
+
+      // Flushes a reasoningEffort choice made before this session had a
+      // sessionId yet (see switchEffort/_reasoningEffortDirty) - called from
+      // startSession right after connecting, mirroring
+      // _syncPlanStateFromDisk's _sessionModeDirty flush.
+      async _flushReasoningEffortIfDirty() {
+        if (!this._reasoningEffortDirty || !this.sessionId) return;
+        this._reasoningEffortDirty = false;
+        try {
+          await setSessionEffortById(this.sessionId, this.reasoningEffort);
+        } catch {
+          // best-effort, same rationale as _syncPlanStateFromDisk's flush
         }
       },
 
@@ -485,6 +641,135 @@ export function useZeroSessionStore(key) {
         }
       },
 
+      /**
+       * Toggle Plan Mode for this session (ACP "spec-draft" mode - read-only
+       * exploration ending in a proposed implementation spec for review,
+       * the native equivalent of Claude Code's Plan Mode). All three modes
+       * ("auto" | "ask" | "spec-draft") are the real ACP `session/set_mode`,
+       * enforced by the engine itself - not a client-side approximation.
+       * Three cases, from most to least common: a connected session pushes
+       * the change live; a known-but-disconnected session (e.g. reopened
+       * from history, not yet resumed) persists it to disk directly, picked
+       * up automatically on next connect; a brand-new panel with no
+       * sessionId yet has nowhere to persist to, so the choice is just
+       * marked dirty and flushed by _syncPlanStateFromDisk once
+       * startSession connects.
+       * @param {"auto" | "ask" | "spec-draft"} mode
+       */
+      async setMode(mode) {
+        this.sessionMode = mode;
+        try {
+          if (this.isConnected) {
+            await setSessionMode(this.sessionKey, mode);
+          } else if (this.sessionId) {
+            await setSessionModeById(this.sessionId, mode);
+          } else {
+            this._sessionModeDirty = true;
+          }
+        } catch (error) {
+          const globalStore = useZeroStore();
+          globalStore.zeroError = error;
+        }
+      },
+
+      /**
+       * Restore sessionMode/pendingPlanReview from the backend's
+       * disk-persisted session-plan-state.json, or flush a choice made
+       * before this session had a sessionId (_sessionModeDirty). Called
+       * after openSession (browsing history, no live connection needed) and
+       * after startSession connects (covers reconnecting after an app
+       * restart).
+       */
+      async _syncPlanStateFromDisk() {
+        if (!this.sessionId) return;
+        if (this._sessionModeDirty) {
+          this._sessionModeDirty = false;
+          try {
+            await setSessionMode(this.sessionKey, this.sessionMode);
+          } catch {
+            // best-effort, same rationale as _loadAdvisorConfig's dirty flush
+          }
+          return;
+        }
+        try {
+          const state = await getSessionPlanState(this.sessionId);
+          this.sessionMode = state?.mode || "auto";
+          if (state?.pendingSpec && !this.pendingPlanReview) {
+            try {
+              const content = await readSpecFile(state.pendingSpec.filePath);
+              this.pendingPlanReview = { ...state.pendingSpec, content };
+            } catch {
+              // The spec file is gone from disk - self-heal the orphaned record.
+              await clearPendingSpec(this.sessionId).catch(() => {});
+            }
+          }
+        } catch {
+          // keep current values
+        }
+      },
+
+      /**
+       * Fetch the submitted spec's markdown and open the review dialog.
+       * Called from handleZeroEvent when a spec_review_required event
+       * arrives live during this app run - the Rust bridge has already
+       * persisted the pending spec as a side effect, this just fetches the
+       * content to display now.
+       */
+      async _loadPlanReview(event) {
+        try {
+          const content = await readSpecFile(event.filePath);
+          this.pendingPlanReview = { ...event, content };
+        } catch (error) {
+          const globalStore = useZeroStore();
+          globalStore.zeroError = error;
+        }
+      },
+
+      /**
+       * Approve the pending spec: flip the session's mode to the chosen
+       * target ("auto" = implement automatically, "ask" = review each
+       * edit), then send the implementation instruction as a normal
+       * follow-up prompt in this same session (mirrors `zero spec approve`,
+       * but as one continuous ACP conversation instead of forking a new
+       * session - there is no store.RecordSpec on the ACP path, so the
+       * CLI's `zero spec approve` cannot be used here).
+       * @param {"auto" | "ask"} mode
+       * @param {string} [comment]
+       */
+      async approvePlanReview(mode, comment = "") {
+        const review = this.pendingPlanReview;
+        if (!review) return;
+        this.pendingPlanReview = null;
+        await clearPendingSpec(this.sessionId).catch(() => {});
+        this.sessionMode = mode;
+        try {
+          if (this.isConnected) {
+            await setSessionMode(this.sessionKey, mode);
+          } else if (this.sessionId) {
+            await setSessionModeById(this.sessionId, mode);
+          }
+        } catch (error) {
+          const globalStore = useZeroStore();
+          globalStore.zeroError = error;
+        }
+        const base = i18n.global.t("chat.planReviewApproveInstruction", { title: review.title });
+        const content = comment.trim() ? `${base}\n\n${comment.trim()}` : base;
+        await this.sendMessage(content);
+      },
+
+      /**
+       * Request changes: mode stays spec-draft (still read-only) - just
+       * clear the persisted pending spec and send the feedback as the next
+       * ordinary prompt; the agent revises and calls submit_spec again.
+       * @param {string} feedback
+       */
+      async requestPlanChanges(feedback) {
+        if (!feedback || !feedback.trim()) return;
+        this.pendingPlanReview = null;
+        await clearPendingSpec(this.sessionId).catch(() => {});
+        await this.sendMessage(feedback.trim());
+      },
+
       async stopSession() {
         try {
           await stopZeroSession(this.sessionKey);
@@ -505,6 +790,8 @@ export function useZeroSessionStore(key) {
         this.currentResponse = "";
         this.currentThinking = "";
         this.currentPlan = [];
+        this.sessionMode = "auto";
+        this.pendingPlanReview = null;
         this._lastEventCount = 0;
         this.isLoadingSession = true;
 
@@ -517,6 +804,11 @@ export function useZeroSessionStore(key) {
         } finally {
           this.isLoadingSession = false;
         }
+
+        // Restore the Plan Mode toggle and an eventual pending plan review
+        // for this session even before reconnecting a live process (session
+        // recovery from history).
+        await this._syncPlanStateFromDisk();
 
         this._startSessionSync();
         this._syncRuntimeMeta();
@@ -647,6 +939,8 @@ export function useZeroSessionStore(key) {
             this.sessionId = null;
             this.messages = [];
             this.currentPlan = [];
+            this.sessionMode = "auto";
+            this.pendingPlanReview = null;
           }
           await deleteSession(sessionId);
           if (onRefresh) await onRefresh();
@@ -695,14 +989,6 @@ export function useZeroSessionStore(key) {
           this.finalizeThinking();
           this.addPermissionRequest(event.payload);
           this._syncRuntimeMeta();
-          const globalStore = useZeroStore();
-          if (globalStore.permissionMode === "auto_allow") {
-            const allowOption = event.payload.options?.find((o) => o.optionId === "allow");
-            if (allowOption) {
-              console.log("[zero-session] auto-allow responding:", event.payload.requestId);
-              this.respondToPermission(event.payload.requestId, "allow");
-            }
-          }
         });
       },
 
@@ -760,6 +1046,16 @@ export function useZeroSessionStore(key) {
         this.currentResponse = "";
         this.currentThinking = "";
         this.currentPlan = [];
+        // Deliberately NOT resetting sessionMode here: this is a crash of
+        // the live process, not a session switch. The Rust bridge already
+        // reapplies spec-draft automatically on the next respawn (see
+        // spawn_and_handshake) - resetting to "auto" here would show it in
+        // the UI while the engine is still read-only underneath.
+        // pendingPlanReview is cleared locally (no live process to answer a
+        // decision against) but comes back on its own once startSession
+        // reconnects and runs _syncPlanStateFromDisk, since the persisted
+        // record isn't touched here.
+        this.pendingPlanReview = null;
         this.runInProgress = false;
         this._syncRuntimeMeta();
       },
@@ -804,6 +1100,11 @@ export function useZeroSessionStore(key) {
             if (Array.isArray(event.entries)) {
               this.currentPlan = event.entries;
             }
+            break;
+
+          case "spec_review_required":
+            this.finalizeThinking();
+            this._loadPlanReview(event);
             break;
 
           case "run_end":

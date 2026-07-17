@@ -62,22 +62,69 @@
         <q-icon name="attach_file" size="18px" />
         <q-tooltip>{{ t("chat.attachFile") }}</q-tooltip>
       </button>
-      <button
-        type="button"
-        class="chat-input__mode"
-        :class="{
-          'chat-input__mode--active': zeroStore.permissionMode === 'auto_allow',
-          'chat-input__mode--collapsed': isNarrowViewport,
-        }"
-        :disabled="disabled"
-        @click="togglePermissionMode"
-      >
-        <q-icon
-          :name="zeroStore.permissionMode === 'auto_allow' ? 'check_circle' : 'help_outline'"
-          size="14px"
-        />
-        <span class="chat-input__mode-label">{{ permissionModeLabel }}</span>
-      </button>
+      <div class="chat-input__mode-wrap">
+        <button
+          type="button"
+          class="chat-input__mode"
+          :class="{
+            'chat-input__mode--active': sessionStore.sessionMode !== 'auto',
+            'chat-input__mode--collapsed': isNarrowViewport,
+          }"
+          :disabled="disabled"
+          @click="toggleModeMenu"
+        >
+          <q-icon :name="sessionModeIcon" size="14px" />
+          <span class="chat-input__mode-label">{{ sessionModeLabel }}</span>
+          <q-tooltip v-if="!modeMenuOpen">{{ sessionModeTooltip }}</q-tooltip>
+        </button>
+        <transition name="chat-input__model-fade">
+          <div
+            v-if="modeMenuOpen"
+            v-click-outside="closeModeMenu"
+            class="chat-input__mode-dropdown"
+          >
+            <div class="chat-input__model-header">{{ t("chat.modeMenuTitle") }}</div>
+            <div class="chat-input__model-separator" />
+            <button
+              v-for="option in sessionModeOptions"
+              :key="option.value"
+              type="button"
+              class="chat-input__mode-item"
+              :class="{
+                'chat-input__mode-item--active': sessionStore.sessionMode === option.value,
+              }"
+              @click="selectSessionMode(option.value)"
+            >
+              <q-icon
+                :name="sessionStore.sessionMode === option.value ? 'check_circle' : option.icon"
+                size="16px"
+                :color="sessionStore.sessionMode === option.value ? 'primary' : 'grey-6'"
+              />
+              <span class="chat-input__mode-item-text">
+                <span class="chat-input__mode-item-label">{{ option.label }}</span>
+                <span class="chat-input__mode-item-desc">{{ option.description }}</span>
+              </span>
+            </button>
+          </div>
+        </transition>
+      </div>
+      <div v-if="activeModelReasoningEfforts.length" class="chat-input__effort-wrap">
+        <q-btn-toggle
+          :model-value="sessionStore.reasoningEffort || 'auto'"
+          dense
+          unelevated
+          no-caps
+          toggle-color="primary"
+          size="sm"
+          :disabled="disabled"
+          :options="effortToggleOptions"
+          @update:model-value="selectReasoningEffort"
+        >
+          <q-tooltip anchor="top middle" self="bottom middle">{{
+            t("chat.effortTooltip")
+          }}</q-tooltip>
+        </q-btn-toggle>
+      </div>
       <div class="chat-input__advisor-wrap">
         <div
           class="chat-input__advisor-pill"
@@ -94,6 +141,7 @@
           >
             <q-icon name="auto_awesome" size="14px" />
             <span class="chat-input__advisor-toggle-label">{{ advisorModeLabel }}</span>
+            <q-tooltip>{{ t("chat.advisorTooltip") }}</q-tooltip>
           </button>
           <template v-if="sessionStore.advisorEnabled">
             <div class="chat-input__advisor-divider" />
@@ -253,18 +301,52 @@ const attachedFile = computed({
 });
 const pickingFile = ref(false);
 const advisorSettingsOpen = ref(false);
-
-const permissionModeKey = "zero-permission-mode";
+const modeMenuOpen = ref(false);
 
 const paneWidth = inject("paneWidth", ref(9999));
-const isNarrowViewport = computed(() => paneWidth.value < 500);
+// Same threshold as ChatView.vue's PANE_NARROW_THRESHOLD - kept in sync so
+// the pills collapse to icon-only right as the pane itself switches into its
+// narrow layout, instead of two independently-tuned breakpoints drifting
+// apart. Deliberately higher than the pills' actual minimum combined width
+// so collapsing kicks in with room to spare (e.g. right when a second panel
+// is opened), rather than only after the row has already started to crowd.
+const isNarrowViewport = computed(() => paneWidth.value < 640);
 
-const permissionModeLabel = computed(() =>
-  zeroStore.permissionMode === "auto_allow" ? t("chat.autoAllow") : t("chat.ask"),
+// The session's ACP permission mode - all three are the real
+// `session/set_mode`, enforced by the engine itself (see
+// zero-session-store.js's setMode): "auto" runs safe tools automatically and
+// asks before risky ones, "ask" asks before every tool that changes state,
+// "spec-draft" is Plan Mode (read-only exploration ending in a plan for
+// review).
+const SESSION_MODE_ORDER = ["auto", "ask", "spec-draft"];
+
+const sessionModeMeta = computed(() => ({
+  auto: {
+    label: t("chat.autoAllow"),
+    description: t("chat.autoAllowTooltip"),
+    icon: "check_circle",
+  },
+  ask: {
+    label: t("chat.ask"),
+    description: t("chat.askTooltip"),
+    icon: "help_outline",
+  },
+  "spec-draft": {
+    label: t("chat.planMode"),
+    description: t("chat.planModeTooltip"),
+    icon: "fact_check",
+  },
+}));
+
+const sessionModeOptions = computed(() =>
+  SESSION_MODE_ORDER.map((value) => ({ value, ...sessionModeMeta.value[value] })),
 );
 
-const permissionModeTooltip = computed(() =>
-  zeroStore.permissionMode === "auto_allow" ? t("chat.autoAllowTooltip") : t("chat.askTooltip"),
+const currentSessionMode = computed(() => sessionStore.sessionMode || "auto");
+const sessionModeLabel = computed(() => sessionModeMeta.value[currentSessionMode.value].label);
+const sessionModeIcon = computed(() => sessionModeMeta.value[currentSessionMode.value].icon);
+const sessionModeTooltip = computed(
+  () => sessionModeMeta.value[currentSessionMode.value].description,
 );
 
 const advisorModeLabel = computed(() =>
@@ -278,16 +360,39 @@ const advisorModeLabel = computed(() =>
 // connected yet, so it shows the default it would inherit if it did.
 const effectiveActiveModel = computed(() => sessionStore.activeModel || zeroStore.activeModel);
 
+// Reasoning-effort tiers the active model supports, sourced from
+// zeroStore.modelCapabilities (populated from `zero providers models --json`
+// via loadAvailableModels). Empty for a model with no reasoning controls, or
+// one not yet resolved by the model registry - the toggle below hides itself
+// entirely in that case, mirroring the TUI's /effort picker (which only ever
+// offers "auto" for such models).
+const activeModelReasoningEfforts = computed(
+  () => zeroStore.modelCapabilities[effectiveActiveModel.value]?.reasoningEfforts || [],
+);
+
+const effortLabels = {
+  minimal: "chat.effortMinimal",
+  low: "chat.effortLow",
+  medium: "chat.effortMedium",
+  high: "chat.effortHigh",
+  xhigh: "chat.effortXhigh",
+  max: "chat.effortMax",
+};
+
+const effortToggleOptions = computed(() => [
+  { label: t("chat.effortAuto"), value: "auto" },
+  ...activeModelReasoningEfforts.value.map((tier) => ({
+    label: effortLabels[tier] ? t(effortLabels[tier]) : tier,
+    value: tier,
+  })),
+]);
+
 // Load eagerly on mount instead of only on first click of the model picker,
 // so the menu is already populated by the time the user opens it - the
 // @show handler on the q-menu stays as a retry path if this fails silently
 // (e.g. a transient network hiccup probing the provider's model list).
 onMounted(() => {
   zeroStore.loadAvailableModels();
-  const savedMode = localStorage.getItem(permissionModeKey);
-  if (savedMode === "ask" || savedMode === "auto_allow") {
-    zeroStore.setPermissionMode(savedMode);
-  }
 });
 
 // Revokes an image attachment's blob: URL whenever it's actually replaced or
@@ -388,55 +493,16 @@ function submit() {
   nextTick(autoResize);
 }
 
-const ATTACHMENT_EXTENSIONS = [
-  "png",
-  "jpg",
-  "jpeg",
-  "gif",
-  "webp",
-  "txt",
-  "md",
-  "csv",
-  "json",
-  "yaml",
-  "yml",
-  "xml",
-  "html",
-  "htm",
-  "css",
-  "js",
-  "ts",
-  "jsx",
-  "tsx",
-  "py",
-  "go",
-  "rs",
-  "java",
-  "kt",
-  "swift",
-  "c",
-  "cpp",
-  "cc",
-  "cxx",
-  "h",
-  "hpp",
-  "rb",
-  "php",
-  "sh",
-  "sql",
-  "dockerfile",
-];
-
 async function pickFile() {
+  // No `filters` - the native dialog shows every file. The backend
+  // (attachment_kind_for_file in lib.rs) never rejects by type either: known
+  // extensions keep their exact mime type, anything else that looks like
+  // text is attached as text, and genuinely binary content (PDFs, archives,
+  // ...) is still attached, just sent to the agent as a named reference
+  // instead of inlined content (see build_prompt_blocks in bridge.rs).
   const selected = await open({
     multiple: false,
     title: t("chat.attachFileTitle"),
-    filters: [
-      {
-        name: "Supported files",
-        extensions: ATTACHMENT_EXTENSIONS,
-      },
-    ],
   });
   if (!selected) return;
 
@@ -477,10 +543,18 @@ function onFocus() {
   emit("focus");
 }
 
-function togglePermissionMode() {
-  const nextMode = zeroStore.permissionMode === "ask" ? "auto_allow" : "ask";
-  zeroStore.setPermissionMode(nextMode);
-  localStorage.setItem(permissionModeKey, nextMode);
+function toggleModeMenu() {
+  modeMenuOpen.value = !modeMenuOpen.value;
+}
+
+function closeModeMenu() {
+  modeMenuOpen.value = false;
+}
+
+function selectSessionMode(mode) {
+  closeModeMenu();
+  if (mode === currentSessionMode.value) return;
+  sessionStore.setMode(mode);
 }
 
 function toggleAdvisorMode() {
@@ -504,6 +578,10 @@ function closeAdvisorSettings() {
 
 function selectModel(model) {
   sessionStore.switchModel(model);
+}
+
+function selectReasoningEffort(effort) {
+  sessionStore.switchEffort(effort === "auto" ? "" : effort);
 }
 
 function selectAdvisorModel(model) {
@@ -857,19 +935,6 @@ defineExpose({ focus: () => textareaRef.value?.focus() });
   margin-left: -5px;
 }
 
-.chat-input__mode--collapsed:hover:not(:disabled) {
-  width: auto;
-  max-width: 140px;
-  padding: 0 10px 0 8px;
-  justify-content: flex-start;
-}
-
-.chat-input__mode--collapsed:hover:not(:disabled) .chat-input__mode-label {
-  max-width: 90px;
-  opacity: 1;
-  margin-left: 0;
-}
-
 .chat-input__mode-label {
   white-space: nowrap;
   overflow: hidden;
@@ -881,6 +946,80 @@ defineExpose({ focus: () => textareaRef.value?.focus() });
     max-width 0.5s ease,
     opacity 0.35s ease,
     margin 0.35s ease;
+}
+
+.chat-input__mode-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.chat-input__effort-wrap {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.chat-input__mode-dropdown {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 6000;
+  min-width: 260px;
+  max-width: 320px;
+  display: flex;
+  flex-direction: column;
+  padding: 6px 0;
+  border-radius: 12px;
+  background: rgba(30, 30, 30, 0.5);
+  border: 1px solid rgba(128, 128, 128, 0.18);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  overflow: hidden;
+}
+
+.chat-input__mode-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: calc(100% - 16px);
+  min-height: 40px;
+  padding: 8px 16px;
+  margin: 2px 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s ease;
+}
+
+.chat-input__mode-item:hover {
+  background: rgba(128, 128, 128, 0.12);
+}
+
+.chat-input__mode-item--active {
+  background: rgba(25, 118, 210, 0.1);
+}
+
+.chat-input__mode-item-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.chat-input__mode-item-label {
+  font-size: 0.86em;
+  font-weight: 500;
+  color: var(--chat-text);
+}
+
+.chat-input__mode-item-desc {
+  font-size: 0.76em;
+  line-height: 1.3;
+  color: var(--chat-text-muted, rgba(128, 128, 128, 0.8));
 }
 
 .chat-input__model-fade-enter-active,
@@ -936,10 +1075,12 @@ defineExpose({ focus: () => textareaRef.value?.focus() });
   border-radius: 17px;
   border: 1px solid rgba(128, 128, 128, 0.22);
   background: transparent;
+  color: rgba(128, 128, 128, 0.9);
   overflow: hidden;
   transition:
     background 0.15s ease,
-    border-color 0.15s ease;
+    border-color 0.15s ease,
+    color 0.15s ease;
 }
 
 .chat-input__advisor-pill:hover {

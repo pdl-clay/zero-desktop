@@ -14,10 +14,12 @@ export const useZeroStore = defineStore("zero", {
     zeroVersion: null,
     zeroError: null,
     availableModels: [],
+    // Additive: { [modelId]: { reasoning: boolean, reasoningEfforts: string[] } }.
+    // availableModels itself stays a plain string[] - see loadAvailableModels.
+    modelCapabilities: {},
     activeModel: null,
     isLoadingModels: false,
     _modelsLoaded: false,
-    permissionMode: "ask",
     mcpBackends: [],
     mcpTools: [],
     isLoadingMcp: false,
@@ -46,8 +48,9 @@ export const useZeroStore = defineStore("zero", {
       if (this._modelsLoaded && !force) return;
       this.isLoadingModels = true;
       try {
-        const { models, active } = await listZeroModels();
+        const { models, active, capabilities } = await listZeroModels();
         this.availableModels = models;
+        this.modelCapabilities = capabilities || {};
         this.activeModel = active;
         this._modelsLoaded = true;
       } catch (error) {
@@ -55,10 +58,6 @@ export const useZeroStore = defineStore("zero", {
       } finally {
         this.isLoadingModels = false;
       }
-    },
-
-    setPermissionMode(mode) {
-      this.permissionMode = mode === "auto_allow" ? "auto_allow" : "ask";
     },
 
     async loadMcpBackends({ force = false } = {}) {

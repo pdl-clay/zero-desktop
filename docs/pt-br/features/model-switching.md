@@ -111,7 +111,13 @@ Isso é armazenado em `~/.local/share/zero-desktop/session-models.json` e sobrep
 | -------------------------------- | -------------------------------------------------------------------------------------- |
 | `loadAvailableModels({ force })` | Chama `listZeroModels()`. Cache no `_modelsLoaded`; passe `force: true` para rebuscar. |
 
-O próprio `switchModel(model)` **não** é uma ação da `zero-store.js` — desde o chat paralelo multi-sessão (ADR 004), ele vive na store por sessão `zero-session-store.js` (`useZeroSessionStore(key)`). Ele guarda contra no-op (mesmo modelo) e run em andamento, chama `switchZeroModel(key, model)` para reiniciar apenas o processo daquela sessão, atualiza o `activeModel` próprio da sessão, e também atualiza o `activeModel` da store global para que qualquer painel ainda não conectado adote o novo padrão na primeira conexão.
+O próprio `switchModel(model)` **não** é uma ação da `zero-store.js` — desde o chat paralelo multi-sessão (ADR 004), ele vive na store por sessão `zero-session-store.js` (`useZeroSessionStore(key)`). Ele guarda contra no-op (mesmo modelo) e run em andamento, depois decide o que fazer com base no estado de conexão:
+
+- **Conectado** (`isConnected`): chama `switchZeroModel(key, model)` pra reiniciar só o processo vivo daquela sessão, igual antes.
+- **Tem `sessionId` mas ainda não conectou** (ex: sessão recém-reaberta do histórico, antes do usuário retomá-la): `switch_zero_model`/`switch_session_model` exigem uma entrada em `sessions` indexada pelo `key` do painel, que o bridge Rust só registra depois que a sessão conecta pelo menos uma vez — chamar antes disso lançava `"No active session for key: <uuid>"`. Corrigido chamando `set_zero_session_model_by_id(sessionId, model)` no lugar, uma escrita só em disco (`bridge::set_session_model`) que não exige registro ao vivo. É reaplicado automaticamente na próxima conexão pelo mesmo bloco de reaplicação de modelo em `spawn_and_handshake` que já cobre reconexões.
+- **Painel novo, sem `sessionId` nenhum ainda**: nada é persistido de imediato; `this.activeModel` ainda é atualizado localmente, e `_realignModelBeforeSend` (chamado por `sendMessage`, logo depois que `startSession` conecta) empurra esse valor assim que uma sessão de verdade existir.
+
+Em todos os casos, `this.activeModel` (a escolha deste painel) e o `activeModel` da store global (o padrão para painéis ainda não conectados) são atualizados imediatamente, independente de qual ramo persiste a escolha.
 
 ### `ChatInput.vue` — Seletor de Modelo
 

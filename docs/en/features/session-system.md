@@ -71,7 +71,7 @@ Tauri command: list_zero_sessions(cwd: PathBuf) → Vec<SessionInfo>
 2. Parses the JSON array into `Vec<SessionInfo>`.
 3. Filters sessions where `session.cwd == <requested cwd>`.
 4. Overlays zero-desktop's own titles (from `session-titles.json`) and model ids (from `session-models.json`), since ACP-created sessions get a generic "ACP session" title and an empty `modelId` from zero itself.
-5. Returns the filtered and overlaid list.
+5. Groups the flat, filtered list into a forest via `build_session_tree` (see "Subagent session linking" below) and returns only the root sessions, each carrying its descendants under `children`.
 
 **SessionInfo struct:**
 
@@ -83,10 +83,63 @@ pub struct SessionInfo {
     pub cwd: String,          // workspace directory
     pub model_id: String,     // overlaid from session-models.json
     pub event_count: Option<i64>,
-    pub kind: String,         // "" | "fork" | "child"
+    pub kind: String,         // "" | "fork" | "child" | "spec-draft" | "spec-impl"
     pub provider: String,     // e.g. "openai-compatible"
+    pub parent_session_id: String, // set by the engine when this session was
+                                    // spawned via `--calling-session-id` (Task
+                                    // tool / swarm member) or fork/spec-impl
+    pub root_session_id: String,   // the ultimate top-level ancestor
+    pub agent_name: String,        // e.g. "advisor" for a Task-tool child
+    pub tag: String,               // "specialist" for Task-tool/swarm children
+    pub depth: i64,
+    pub task_id: String,
+    pub children: Vec<SessionInfo>, // NOT from the engine's JSON - populated
+                                     // locally by build_session_tree; always a
+                                     // Vec, never omitted
 }
 ```
+
+### Subagent session linking
+
+Whenever the agent calls the `Task` tool (including an Advisor Mode
+consultation, which is a `Task{name:"advisor",...}` call under the hood) or
+spawns a swarm/team member, the zero engine creates a genuinely separate,
+persisted session for it, sharing the same `cwd` as its parent — so it used
+to show up in `zero sessions list --json`, and therefore in the sidebar, as
+an indistinguishable extra top-level row.
+
+The engine already tags these sessions (`kind: "child"`, `parentSessionId`,
+`rootSessionId`, `agentName`, `tag: "specialist"`, `depth`) whenever a
+`--calling-session-id` was involved in spawning them — `list_zero_sessions`
+now captures those fields instead of discarding them, and
+`build_session_tree` (private fn in `lib.rs`) groups the already-cwd-filtered
+list into a forest: a session with no `parent_session_id`, or whose parent
+isn't present in this same filtered list (different cwd, or already
+deleted), becomes a root; everything else nests under its parent via
+`children`, recursively. Nesting is driven purely by `parent_session_id`,
+generic across every `SessionKind` (fork/child/spec-draft/spec-impl alike) —
+no kind-specific cases.
+
+**Engine-side fix required for full coverage**: Task-tool specialist
+children (including Advisor) were already tagged correctly by
+`internal/sessions.PrepareExec` in `my-zero`. Swarm/team members were not —
+`internal/swarm/tools.go`'s `policyFrom` never threaded the orchestrator's
+own session id through, so spawned members came back untagged
+(`kind: ""`, no parent/root) despite going through the identical subprocess
+mechanism. Fixed by threading `Policy.SessionID` →
+`MemberSpec.ParentSessionID` → `specialist.TaskRunOptions.ParentSessionID` in
+`internal/swarm/{team,member,tools,launcher_specialist}.go`, mirroring what
+`internal/specialist/task_tool.go` already does for the `Task` tool.
+
+**UI**: `src/components/SessionListItem.vue` is a recursive component
+(Vue 3 SFCs can reference themselves by filename with no extra registration)
+rendering one row per session plus, when `session.children.length > 0`, a
+collapsed-by-default "N subagent sessions" toggle. Nested rows show an origin
+caption (`agent_name`, falling back to `kind`). The five row actions
+(select/rename/delete/status lookups) are provided by `MainLayout.vue` via
+`provide("sessionListActions", {...})` and consumed with `inject(...)` at
+every recursion depth, instead of prop-drilling. The sidebar's session count
+(`workspace.sessions`) counts roots only.
 
 ### `load_session_history` (`lib.rs`)
 
@@ -144,8 +197,8 @@ The session state is split across three stores (see [ADR 004](../architecture/de
 
 | Store                      | Type                               | Key state                                                                                                                                                                                                              |
 | -------------------------- | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `zero-store.js`            | Global singleton                   | `zeroPath`, `availableModels`, `activeModel`, `mcpBackends`, `permissionMode`                                                                                                                                          |
-| `zero-session-store.js`    | Factory `useZeroSessionStore(key)` | `sessionKey`, `sessionId`, `cwd`, `messages[]`, `currentResponse`, `currentThinking`, `currentPlan`, `runInProgress`, `isConnected`                                                                                    |
+| `zero-store.js`            | Global singleton                   | `zeroPath`, `availableModels`, `activeModel`, `mcpBackends`                                                                                                                                                            |
+| `zero-session-store.js`    | Factory `useZeroSessionStore(key)` | `sessionKey`, `sessionId`, `cwd`, `messages[]`, `currentResponse`, `currentThinking`, `currentPlan`, `sessionMode`, `runInProgress`, `isConnected`                                                                     |
 | `session-runtime-store.js` | Global singleton                   | `openKeys[]`, `focusedKeyByPath{}` (per-workspace focus), `keyMeta{}` (badges, cwd, title per key). Panel cap (`MAX_OPEN_PANELS = 4`) is enforced **per workspace**, not globally — see `panelCountFor`/`canOpenMore`. |
 | `workspaces-store.js`      | Global singleton                   | `workspaces[]`, `activePath`, `sessionsByPath{}`                                                                                                                                                                       |
 

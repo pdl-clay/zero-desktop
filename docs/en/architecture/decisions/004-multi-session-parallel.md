@@ -66,7 +66,7 @@ process cap.
 The monolithic `zero-store.js` was split into:
 
 - **`zero-store.js`** (global): `zeroPath`, `availableModels`, `activeModel`,
-  `mcpBackends`, `mcpTools`, `permissionMode` — app-wide state only.
+  `mcpBackends`, `mcpTools` — app-wide state only.
 - **`zero-session-store.js`** (factory): `useZeroSessionStore(key)` creates a
   per-session Pinia store with `messages`, `currentResponse`, `runInProgress`,
   etc. All listeners filter by `sessionKey`. The factory pattern allows

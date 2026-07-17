@@ -137,79 +137,11 @@
                     <q-scroll-area class="col" style="min-width: 0">
                       <!-- Session list -->
                       <q-list dense class="q-gutter-y-xs">
-                        <div
+                        <SessionListItem
                           v-for="session in currentSessions"
                           :key="session.session_id"
-                          class="session-item-wrapper"
-                        >
-                          <q-item
-                            clickable
-                            v-ripple
-                            :class="[
-                              'session-item q-px-sm',
-                              {
-                                'session-item--active': isSessionOpen(session),
-                              },
-                            ]"
-                            @click="onSelectSession(session)"
-                          >
-                            <q-item-section side>
-                              <SessionIndicator
-                                :status="sessionWorkingStatus(session)"
-                                :attention="sessionAttention(session)"
-                                :size="18"
-                              />
-                            </q-item-section>
-
-                            <q-item-section class="session-item__content">
-                              <q-item-label class="text-body2 session-item__title" lines="1">
-                                {{ truncateTitle(session.title) || session.session_id.slice(-8) }}
-                                <q-tooltip
-                                  v-if="session.title"
-                                  anchor="top middle"
-                                  self="bottom middle"
-                                >
-                                  {{ session.title }}
-                                </q-tooltip>
-                              </q-item-label>
-                              <q-item-label
-                                caption
-                                class="row items-center q-gutter-x-xs session-item__meta"
-                              >
-                                <span v-if="session.model_id" class="ellipsis">{{
-                                  session.model_id
-                                }}</span>
-                                <span v-if="session.model_id">&middot;</span>
-                                <span class="ellipsis">{{ formatDate(session.created_at) }}</span>
-                              </q-item-label>
-                            </q-item-section>
-                          </q-item>
-
-                          <q-btn
-                            class="session-rename-btn"
-                            round
-                            dense
-                            flat
-                            size="xs"
-                            icon="edit"
-                            color="grey-7"
-                            @click.stop="onRenameSession(session)"
-                          >
-                            <q-tooltip>{{ $t("workspace.renameSession") }}</q-tooltip>
-                          </q-btn>
-                          <q-btn
-                            class="session-remove-btn"
-                            round
-                            dense
-                            flat
-                            size="xs"
-                            icon="close"
-                            color="negative"
-                            @click.stop="onDeleteSession(session)"
-                          >
-                            <q-tooltip>{{ $t("workspace.deleteSession") }}</q-tooltip>
-                          </q-btn>
-                        </div>
+                          :session="session"
+                        />
 
                         <div
                           v-if="currentSessions.length === 0"
@@ -308,7 +240,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from "vue";
+import { ref, computed, onMounted, watch, provide } from "vue";
 import { useQuasar } from "quasar";
 import { useI18n } from "vue-i18n";
 import { useZeroStore } from "@/stores/zero-store";
@@ -327,6 +259,7 @@ import FileExplorerTree from "@/components/explorer/FileExplorerTree.vue";
 import StatusBadge from "@/components/StatusBadge.vue";
 import WorkspaceAvatar from "@/components/WorkspaceAvatar.vue";
 import SessionIndicator from "@/components/SessionIndicator.vue";
+import SessionListItem from "@/components/SessionListItem.vue";
 
 const $q = useQuasar();
 const { t } = useI18n();
@@ -554,6 +487,20 @@ function onRenameSession(session) {
     }
   });
 }
+
+// Consumed by SessionListItem.vue (recursive - one instance per row at any
+// depth) via inject("sessionListActions"), instead of prop-drilling these
+// eight functions down through every level of subagent/advisor nesting.
+provide("sessionListActions", {
+  isSessionOpen,
+  sessionWorkingStatus,
+  sessionAttention,
+  truncateTitle,
+  formatDate,
+  onSelectSession,
+  onRenameSession,
+  onDeleteSession,
+});
 
 async function onNewSession() {
   const cwd = workspacesStore.activePath;
@@ -854,62 +801,6 @@ function onDocumentMouseUp() {
   transform: scale(1);
 }
 
-.session-item-wrapper {
-  position: relative;
-  min-width: 0;
-  width: 100%;
-}
-
-.session-remove-btn,
-.session-rename-btn {
-  position: absolute;
-  top: 2px;
-  z-index: 1;
-  opacity: 0;
-  transform: scale(0.4);
-  transition: all 0.15s ease;
-}
-
-.session-remove-btn {
-  right: 2px;
-}
-
-.session-rename-btn {
-  right: 24px;
-}
-
-.session-item-wrapper:hover .session-remove-btn,
-.session-item-wrapper:hover .session-rename-btn {
-  opacity: 1;
-  transform: scale(1);
-}
-
-.session-item-wrapper :deep(.q-item__section--main) {
-  min-width: 0;
-  overflow: hidden;
-}
-
-.session-item__content {
-  min-width: 0 !important;
-  overflow: hidden;
-}
-
-.session-item__title,
-.session-item__meta {
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.session-item__meta span {
-  display: inline-block;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .session-panel {
   max-width: 240px;
   opacity: 1;
@@ -942,6 +833,16 @@ function onDocumentMouseUp() {
   color: var(--chat-text-muted);
 }
 
+/* Base look for the always-inline "new session" row - SessionListItem.vue
+   defines the same .session-item/.session-item-wrapper rules in its own
+   scoped style for the recursive rows, but Vue's scoped CSS doesn't reach
+   this row since it isn't rendered by that component. */
+.session-item-wrapper {
+  position: relative;
+  min-width: 0;
+  width: 100%;
+}
+
 .session-item {
   border-radius: 10px;
   border: 1px solid transparent;
@@ -956,11 +857,6 @@ function onDocumentMouseUp() {
 .session-item:hover {
   background: var(--chat-card-bg);
   border-color: var(--chat-card-border);
-}
-
-.session-item--active {
-  background: rgba(25, 210, 77, 0.12);
-  border-color: rgba(25, 210, 77, 0.4);
 }
 
 .session-item--new {

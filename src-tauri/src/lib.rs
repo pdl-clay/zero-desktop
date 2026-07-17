@@ -7,7 +7,9 @@ pub mod terminal;
 
 use bridge::{history_path_for, LiveSessionInfo, StartedSession, ZeroBridge};
 use bridge::{get_session_title, remove_session_title, set_session_title};
-use bridge::{get_session_model, remove_session_model};
+use bridge::{get_session_model, remove_session_model, set_session_model};
+use bridge::set_session_effort;
+use bridge::{clear_pending_spec, get_session_plan_state, remove_session_plan_state, set_session_mode, SessionPlanState};
 use base64::Engine;
 use locator::locate_zero;
 use serde::Deserialize;
@@ -79,16 +81,38 @@ struct BackendsOutput {
 pub struct SessionInfo {
     #[serde(alias = "sessionId")]
     pub session_id: String,
+    #[serde(default)]
     pub title: String,
-    #[serde(alias = "createdAt")]
+    #[serde(alias = "createdAt", default)]
     pub created_at: String,
+    #[serde(default)]
     pub cwd: String,
-    #[serde(alias = "modelId")]
+    #[serde(alias = "modelId", default)]
     pub model_id: String,
-    #[serde(alias = "eventCount")]
+    #[serde(alias = "eventCount", default)]
     pub event_count: Option<i64>,
+    #[serde(default)]
     pub kind: String,
+    #[serde(default)]
     pub provider: String,
+    #[serde(alias = "parentSessionId", default)]
+    pub parent_session_id: String,
+    #[serde(alias = "rootSessionId", default)]
+    pub root_session_id: String,
+    #[serde(alias = "agentName", default)]
+    pub agent_name: String,
+    #[serde(default)]
+    pub tag: String,
+    #[serde(default)]
+    pub depth: i64,
+    #[serde(alias = "taskId", default)]
+    pub task_id: String,
+    /// Not part of the engine's JSON - populated locally by
+    /// `list_zero_sessions`'s tree-building pass. Always a `Vec` (never
+    /// omitted), so the frontend never has to distinguish undefined from
+    /// empty.
+    #[serde(default)]
+    pub children: Vec<SessionInfo>,
 }
 
 /// A raw persisted session event, as stored in `events.jsonl`. Kept
@@ -127,6 +151,11 @@ const MAX_FILE_BYTES: u64 = 10 * 1024 * 1024;
 enum AttachmentKind {
     Image,
     Text,
+    /// Anything that isn't a recognized image and doesn't look like text
+    /// (PDFs, archives, executables, ...). Still attachable - just sent to
+    /// the agent as a named reference instead of inlined content, since raw
+    /// binary bytes can't be handed to the model directly.
+    Binary,
 }
 
 fn attachment_kind_from_extension(path: &Path) -> Result<(AttachmentKind, String), String> {
@@ -171,29 +200,64 @@ fn attachment_kind_from_extension(path: &Path) -> Result<(AttachmentKind, String
     }
 }
 
-/// Decides how to attach a file given its path and already-read bytes.
-/// Tries the curated extension map first (keeps exact mime types like
-/// `application/json` for recognized types); falls back to treating any
-/// extensionless or unrecognized-extension file as plain text as long as it
-/// actually looks like text (valid UTF-8, no null byte) - this is what makes
-/// the file explorer usable for the many real project files a fixed
-/// extension list will never cover (`Dockerfile`, `Makefile`, `.gitignore`,
-/// `.env`, lockfiles: `Path::extension()` returns `None` for any of these
-/// since they have no `.ext` suffix, so the extension map alone always
-/// rejected them). Only genuinely binary-looking content is still rejected.
-fn attachment_kind_for_file(path: &Path, bytes: &[u8]) -> Result<(AttachmentKind, String), String> {
+/// Decides how to attach a file given its path and already-read bytes. Never
+/// rejects a file by type - the user can attach anything. Tries the curated
+/// extension map first (keeps exact mime types like `application/json` for
+/// recognized types); falls back to treating any extensionless or
+/// unrecognized-extension file as plain text as long as it actually looks
+/// like text (valid UTF-8, no null byte) - this is what makes the file
+/// explorer usable for the many real project files a fixed extension list
+/// will never cover (`Dockerfile`, `Makefile`, `.gitignore`, `.env`,
+/// lockfiles: `Path::extension()` returns `None` for any of these since they
+/// have no `.ext` suffix, so the extension map alone would always miss
+/// them). Anything else - genuinely binary, non-image content (PDFs,
+/// archives, executables, ...) - is still accepted as an opaque
+/// `AttachmentKind::Binary` attachment; `build_prompt_blocks` (bridge.rs)
+/// sends it to the agent as a named reference instead of inlined content,
+/// since there is no way to meaningfully hand raw binary bytes to the model.
+fn attachment_kind_for_file(path: &Path, bytes: &[u8]) -> (AttachmentKind, String) {
     if let Ok(result) = attachment_kind_from_extension(path) {
         if result.0 == AttachmentKind::Text && bytes.contains(&0) {
-            return Err("File contains binary data and cannot be attached as text.".to_string());
+            return (
+                AttachmentKind::Binary,
+                binary_mime_for(path).unwrap_or_else(|| "application/octet-stream".to_string()),
+            );
         }
-        return Ok(result);
+        return result;
     }
 
-    if bytes.contains(&0) || std::str::from_utf8(bytes).is_err() {
-        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        return Err(format!("Unsupported file type: .{ext}"));
+    // A known binary/document extension is decided by extension alone, never
+    // by sniffing bytes - a PDF's leading bytes ("%PDF-1.4...") are valid
+    // ASCII, so the UTF-8 sniff below would happily (and wrongly) call a
+    // real PDF "text" if it were checked first.
+    if let Some(mime) = binary_mime_for(path) {
+        return (AttachmentKind::Binary, mime);
     }
-    Ok((AttachmentKind::Text, "text/plain".to_string()))
+
+    if !bytes.contains(&0) && std::str::from_utf8(bytes).is_ok() {
+        return (AttachmentKind::Text, "text/plain".to_string());
+    }
+    (AttachmentKind::Binary, "application/octet-stream".to_string())
+}
+
+/// Mime type for a handful of common non-image, non-text document/archive
+/// extensions - `None` when the extension isn't one of these (the caller
+/// falls back to content sniffing, then to the generic octet-stream mime).
+fn binary_mime_for(path: &Path) -> Option<String> {
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    let mime = match ext.as_str() {
+        "pdf" => "application/pdf",
+        "zip" => "application/zip",
+        "gz" | "tgz" => "application/gzip",
+        "doc" => "application/msword",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xls" => "application/vnd.ms-excel",
+        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "ppt" => "application/vnd.ms-powerpoint",
+        "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        _ => return None,
+    };
+    Some(mime.to_string())
 }
 
 /// Reads a file picked from the native file dialog (or the file explorer
@@ -220,7 +284,7 @@ async fn read_file_attachment(path: String) -> Result<FileAttachment, String> {
     let bytes = tokio::fs::read(&path_buf)
         .await
         .map_err(|e| format!("Failed to read file: {e}"))?;
-    let (_kind, mime_type) = attachment_kind_for_file(&path_buf, &bytes)?;
+    let (_kind, mime_type) = attachment_kind_for_file(&path_buf, &bytes);
     let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
     let name = path_buf
         .file_name()
@@ -345,6 +409,7 @@ async fn delete_session(session_id: String) -> Result<(), String> {
     }
     let _ = remove_session_title(&session_id);
     let _ = remove_session_model(&session_id);
+    let _ = remove_session_plan_state(&session_id);
 
     let session_dir = dirs::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -359,6 +424,52 @@ async fn delete_session(session_id: String) -> Result<(), String> {
     tokio::fs::remove_dir_all(&session_dir)
         .await
         .map_err(|e| format!("Failed to delete session {}: {e}", session_id))
+}
+
+/// Groups a flat, already-cwd-filtered session list into a forest: sessions
+/// with no `parent_session_id`, or whose parent isn't present in this same
+/// filtered list (a different-cwd or already-deleted parent), become roots;
+/// every other session nests under its parent via `children`. Nothing is
+/// dropped - an orphaned child becomes its own root rather than vanishing.
+/// Generic across all `SessionKind` values (fork/child/spec-draft/spec-impl
+/// alike) - nesting is driven purely by `parent_session_id`, with no
+/// kind-specific cases. This is what lets subagent/advisor/swarm-member
+/// sessions (which the zero engine already tags with `kind`/`parentSessionId`
+/// once a `--calling-session-id` is involved) nest under the real
+/// conversation that spawned them instead of appearing as indistinguishable
+/// top-level rows in the sidebar.
+fn build_session_tree(flat: Vec<SessionInfo>) -> Vec<SessionInfo> {
+    use std::collections::{HashMap, HashSet};
+
+    let ids: HashSet<String> = flat.iter().map(|s| s.session_id.clone()).collect();
+
+    let mut by_parent: HashMap<String, Vec<SessionInfo>> = HashMap::new();
+    let mut roots: Vec<SessionInfo> = Vec::new();
+
+    for session in flat {
+        let parent = session.parent_session_id.clone();
+        let is_root = parent.is_empty() || !ids.contains(parent.as_str());
+        if is_root {
+            roots.push(session);
+        } else {
+            by_parent.entry(parent).or_default().push(session);
+        }
+    }
+
+    fn attach(node: &mut SessionInfo, by_parent: &mut HashMap<String, Vec<SessionInfo>>) {
+        if let Some(mut kids) = by_parent.remove(&node.session_id) {
+            for kid in &mut kids {
+                attach(kid, by_parent);
+            }
+            node.children = kids;
+        }
+    }
+
+    for root in &mut roots {
+        attach(root, &mut by_parent);
+    }
+
+    roots
 }
 
 #[tauri::command]
@@ -403,7 +514,7 @@ async fn list_zero_sessions(cwd: PathBuf) -> Result<Vec<SessionInfo>, String> {
         }
     }
 
-    Ok(filtered)
+    Ok(build_session_tree(filtered))
 }
 
 #[tauri::command]
@@ -590,6 +701,106 @@ async fn switch_zero_model(
     state.switch_session_model(key, model).await
 }
 
+/// Persists a model choice to disk by session_id directly, without requiring
+/// a live/registered session - the path used when the user picks a model on
+/// a panel that hasn't (re)connected yet (a brand-new session before the
+/// first message, or a session reopened from history before it's resumed).
+/// `switch_session_model` requires a `sessions` entry keyed by the panel's
+/// `key`, which only exists once the session has actually connected at
+/// least once - calling it too early is exactly what produced "No active
+/// session for key: ..." errors. No live push here: there is no running
+/// process to receive it. Picked up automatically the next time this
+/// session's process (re)spawns (see the model-reapply block in
+/// `spawn_and_handshake`).
+#[tauri::command]
+fn set_zero_session_model_by_id(session_id: String, model: String) -> Result<(), String> {
+    set_session_model(&session_id, &model)
+}
+
+/// Switch this session's reasoning-effort preference ("" for auto, or a
+/// modelregistry ReasoningEffort value). Live, no restart. Requires a
+/// registered/connected session (see `set_zero_session_effort_by_id` for the
+/// disconnected-panel case). Mirrors `switch_zero_model` exactly.
+#[tauri::command]
+async fn switch_zero_effort(
+    state: tauri::State<'_, Arc<ZeroBridge>>,
+    key: String,
+    effort: String,
+) -> Result<(), String> {
+    state.switch_session_effort(key, effort).await
+}
+
+/// Persists a reasoning-effort choice to disk by session_id directly, without
+/// requiring a live/registered session - same rationale as
+/// `set_zero_session_model_by_id`.
+#[tauri::command]
+fn set_zero_session_effort_by_id(session_id: String, effort: String) -> Result<(), String> {
+    set_session_effort(&session_id, &effort)
+}
+
+/// Switch this session's ACP permission mode ("auto" | "ask" | "spec-draft")
+/// - the ACP-native equivalent of Claude Code's Plan Mode. Live, no restart.
+/// Requires a registered/connected session (see `set_zero_session_mode_by_id`
+/// for the disconnected-panel case).
+#[tauri::command]
+async fn switch_zero_mode(
+    state: tauri::State<'_, Arc<ZeroBridge>>,
+    key: String,
+    mode: String,
+) -> Result<(), String> {
+    state.switch_session_mode(key, mode).await
+}
+
+/// Persists the mode to disk by session_id directly, without requiring a
+/// live/registered session - the path used when the user flips the Plan Mode
+/// toggle on a panel that hasn't (re)connected yet (e.g. a session reopened
+/// from history before the first message is sent). No live push: there is no
+/// running process to receive it. The choice is picked up automatically the
+/// next time this session's process spawns (see the reapply block in
+/// `spawn_and_handshake`).
+#[tauri::command]
+fn set_zero_session_mode_by_id(session_id: String, mode: String) -> Result<(), String> {
+    set_session_mode(&session_id, &mode)
+}
+
+/// Pure disk read - does not require a live session. Used to restore the
+/// Plan Mode toggle and an eventual pending plan review when reopening a
+/// session (session recovery) or reconnecting after restarting the app.
+#[tauri::command]
+fn get_zero_session_plan_state(session_id: String) -> Option<SessionPlanState> {
+    get_session_plan_state(&session_id)
+}
+
+#[tauri::command]
+fn clear_zero_pending_spec(session_id: String) -> Result<(), String> {
+    clear_pending_spec(&session_id)
+}
+
+/// Reads a spec markdown file for the plan-review dialog (the `filePath`
+/// from a `spec_review_required` event or a persisted `pendingSpec` - always
+/// an absolute path the engine itself reported). Same unrestricted
+/// `tokio::fs` access as `read_file_attachment`; the `.md` check is defense
+/// in depth, not a real security boundary.
+#[tauri::command]
+async fn read_spec_file(path: String) -> Result<String, String> {
+    if !path.ends_with(".md") {
+        return Err("Expected a .md spec file".to_string());
+    }
+    let path_buf = PathBuf::from(&path);
+    let metadata = tokio::fs::metadata(&path_buf)
+        .await
+        .map_err(|e| format!("Failed to read spec file: {e}"))?;
+    if metadata.len() > MAX_FILE_BYTES {
+        return Err(format!(
+            "Spec file is too large ({:.1} MB).",
+            metadata.len() as f64 / (1024.0 * 1024.0)
+        ));
+    }
+    tokio::fs::read_to_string(&path_buf)
+        .await
+        .map_err(|e| format!("Failed to read spec file: {e}"))
+}
+
 #[tauri::command]
 async fn list_live_sessions(
     state: tauri::State<'_, Arc<ZeroBridge>>,
@@ -737,6 +948,14 @@ pub fn run() {
             list_directory_entries,
             list_zero_models,
             switch_zero_model,
+            set_zero_session_model_by_id,
+            switch_zero_effort,
+            set_zero_session_effort_by_id,
+            switch_zero_mode,
+            set_zero_session_mode_by_id,
+            get_zero_session_plan_state,
+            clear_zero_pending_spec,
+            read_spec_file,
             list_live_sessions,
             list_mcp_backends,
             check_mcp_backend,
@@ -773,37 +992,113 @@ mod attachment_tests {
 
     #[test]
     fn known_extension_keeps_exact_mime_type() {
-        let (kind, mime) =
-            attachment_kind_for_file(Path::new("data.json"), b"{}").expect("should be accepted");
+        let (kind, mime) = attachment_kind_for_file(Path::new("data.json"), b"{}");
         assert_eq!(kind, AttachmentKind::Text);
         assert_eq!(mime, "application/json");
     }
 
     #[test]
     fn unknown_extension_falls_back_to_text_plain() {
-        let (kind, mime) = attachment_kind_for_file(Path::new("Dockerfile"), b"FROM rust:1\n")
-            .expect("text-looking extensionless file should be accepted");
+        let (kind, mime) = attachment_kind_for_file(Path::new("Dockerfile"), b"FROM rust:1\n");
         assert_eq!(kind, AttachmentKind::Text);
         assert_eq!(mime, "text/plain");
     }
 
     #[test]
-    fn unknown_extension_with_binary_bytes_is_rejected() {
-        let result = attachment_kind_for_file(Path::new("data.bin"), &[0xFF, 0xFE, 0x00, 0x01]);
-        assert!(result.is_err());
+    fn unknown_extension_with_binary_bytes_is_accepted_as_binary() {
+        let (kind, mime) = attachment_kind_for_file(Path::new("data.bin"), &[0xFF, 0xFE, 0x00, 0x01]);
+        assert_eq!(kind, AttachmentKind::Binary);
+        assert_eq!(mime, "application/octet-stream");
     }
 
     #[test]
-    fn known_text_extension_with_null_byte_is_rejected() {
-        let result = attachment_kind_for_file(Path::new("notes.txt"), &[0x00, b'a']);
-        assert!(result.is_err());
+    fn known_text_extension_with_null_byte_is_accepted_as_binary() {
+        let (kind, mime) = attachment_kind_for_file(Path::new("notes.txt"), &[0x00, b'a']);
+        assert_eq!(kind, AttachmentKind::Binary);
+        assert_eq!(mime, "application/octet-stream");
     }
 
     #[test]
     fn known_image_extension_is_not_sniffed_as_text() {
-        let (kind, mime) = attachment_kind_for_file(Path::new("photo.png"), &[0x89, b'P', b'N', b'G'])
-            .expect("known image extension should be accepted regardless of content");
+        let (kind, mime) =
+            attachment_kind_for_file(Path::new("photo.png"), &[0x89, b'P', b'N', b'G']);
         assert_eq!(kind, AttachmentKind::Image);
         assert_eq!(mime, "image/png");
+    }
+
+    #[test]
+    fn known_binary_extension_gets_specific_mime_type() {
+        let (kind, mime) = attachment_kind_for_file(Path::new("report.pdf"), &[0x25, 0x50, 0x44, 0x46]);
+        assert_eq!(kind, AttachmentKind::Binary);
+        assert_eq!(mime, "application/pdf");
+    }
+}
+
+#[cfg(test)]
+mod session_tree_tests {
+    use super::*;
+
+    fn session(id: &str, parent: &str) -> SessionInfo {
+        SessionInfo {
+            session_id: id.to_string(),
+            title: String::new(),
+            created_at: String::new(),
+            cwd: String::new(),
+            model_id: String::new(),
+            event_count: None,
+            kind: String::new(),
+            provider: String::new(),
+            parent_session_id: parent.to_string(),
+            root_session_id: String::new(),
+            agent_name: String::new(),
+            tag: String::new(),
+            depth: 0,
+            task_id: String::new(),
+            children: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn nests_children_and_grandchildren_under_their_root() {
+        let flat = vec![
+            session("root", ""),
+            session("child-a", "root"),
+            session("child-b", "root"),
+            session("grandchild", "child-a"),
+        ];
+        let tree = build_session_tree(flat);
+
+        assert_eq!(tree.len(), 1);
+        let root = &tree[0];
+        assert_eq!(root.session_id, "root");
+        assert_eq!(root.children.len(), 2);
+
+        let child_a = root.children.iter().find(|c| c.session_id == "child-a").unwrap();
+        assert_eq!(child_a.children.len(), 1);
+        assert_eq!(child_a.children[0].session_id, "grandchild");
+
+        let child_b = root.children.iter().find(|c| c.session_id == "child-b").unwrap();
+        assert!(child_b.children.is_empty());
+    }
+
+    #[test]
+    fn orphaned_child_becomes_its_own_root() {
+        // parent_session_id points at a session that isn't in this filtered
+        // list (e.g. different cwd, or since deleted) - it must not vanish.
+        let flat = vec![session("orphan", "missing-parent")];
+        let tree = build_session_tree(flat);
+
+        assert_eq!(tree.len(), 1);
+        assert_eq!(tree[0].session_id, "orphan");
+        assert!(tree[0].children.is_empty());
+    }
+
+    #[test]
+    fn sessions_with_no_parent_are_all_roots() {
+        let flat = vec![session("a", ""), session("b", "")];
+        let tree = build_session_tree(flat);
+
+        assert_eq!(tree.len(), 2);
+        assert!(tree.iter().all(|s| s.children.is_empty()));
     }
 }

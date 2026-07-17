@@ -148,7 +148,7 @@ E, via o evento dedicado `zero:permission-request`, um pedido de permissão de v
 As stores Pinia estão divididas em três camadas (ver [ADR 004](../architecture/decisions/004-multi-session-parallel.md)):
 
 - **`zero-store.js`** (global, singleton) — `zeroPath`, `availableModels`,
-  `activeModel`, `mcpBackends`, `mcpTools`, `permissionMode`. Apenas estado app-wide.
+  `activeModel`, `mcpBackends`, `mcpTools`. Apenas estado app-wide.
 - **`zero-session-store.js`** (fábrica, `useZeroSessionStore(key)`) — estado por
   sessão: `messages[]`, `currentResponse`, `currentThinking`, `currentPlan`,
   `runInProgress`, listeners (filtrados por `sessionKey`). Getters:

@@ -133,7 +133,7 @@ ChatView.vue / IndexPage.vue
     ├── Barra de status            (barra colorida com status thinking/tool/writing/sending)
     ├── Prévia de anexo            (miniatura de imagem ou chip de arquivo com botão remover)
     ├── Botão anexar               (diálogo nativo de arquivos → read_file_attachment)
-    ├── Toggle de permissão        (perguntar / auto)
+    ├── Seletor de modo de execução (auto / perguntar / plano — ver doc do Modo Plano)
     ├── Seletor de modelo          (dropdown com busca, recentes, indicador de ativo)
     └── Botão Enviar / Cancelar    (arrow_upward quando ocioso, pause quando executando)
 ```
@@ -151,7 +151,7 @@ Todos os componentes vivem em `src/components/chat/`.
 7. O bridge Rust busca a requisição pendente por `correlation_id`, persiste um `permission_decision` no histórico local, e envia a resposta JSON-RPC ao agente.
 8. O agente recebe a decisão e continua ou aborta a chamada da ferramenta.
 
-No modo `auto_allow`, a store seleciona automaticamente a primeira opção `"allow"` imediatamente ao receber a requisição — o usuário nunca vê o prompt.
+Não existe mais um atalho de auto-permitir client-side: o seletor de modo de execução com três opções (`auto` / `ask` / `plan`) é o `session/set_mode` real do ACP, reforçado pelo próprio motor — em modo `auto` o motor já executa ferramentas seguras sem perguntar e só pede permissão nas genuinamente arriscadas, então todo `session/request_permission` que o frontend recebe é um que o próprio motor decidiu valer a pena perguntar. Ver [Modo Plano](./plan-mode.md) para o mecanismo completo de troca de modo e sua persistência por sessão.
 
 ## Sistema de plano
 
@@ -172,7 +172,7 @@ Desde o chat paralelo multi-sessão (ver [ADR 004](../architecture/decisions/004
 - `currentPlan` — entradas do plano do agente (substituído por completo a cada `plan_update`)
 - `workingStatus` getter — retorna `'thinking'`, `{ type: 'tool', toolName }`, `'writing'`, `'sending'`, ou `null`. Usado pela barra de status do `ChatInput.vue`.
 
-A store global singleton `zero-store.js` mantém apenas estado de escopo do app: `permissionMode` — `'ask'` (padrão) ou `'auto_allow'` (persistido no `localStorage`) — e `activeModel` / `availableModels`, que alimentam o seletor de cada sessão.
+A store global singleton `zero-store.js` mantém apenas estado de escopo do app: `activeModel` / `availableModels`, que alimentam o seletor de cada sessão. O modo de execução (`auto` / `ask` / `plan`) é estado por sessão em `zero-session-store.js` — ver [Modo Plano](./plan-mode.md).
 
 Streaming é finalizado em mensagens permanentes quando:
 
