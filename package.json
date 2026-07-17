@@ -18,6 +18,7 @@
     "lint:check": "oxfmt --check && oxlint",
     "dev": "quasar dev",
     "build": "quasar build",
+    "build:appimage": "bash scripts/build-appimage.sh",
     "postinstall": "quasar prepare --silent"
   },
   "dependencies": {
