@@ -49,6 +49,27 @@ detect_arch() {
     esac
 }
 
+# Maps uname's arch name to the Debian/dpkg-style arch tauri-bundler uses
+# when naming the AppImage it produces (<productName>_<version>_<arch>.AppImage
+# - see src-tauri/tauri.conf.json's productName/version and
+# `npm run build:appimage`'s output). This is a different vocabulary than
+# detect_arch's uname-derived name, which is used for the user-facing
+# error message and PATH/symlink naming instead.
+release_asset_arch() {
+    case "$1" in
+        x86_64)
+            echo "amd64"
+            ;;
+        aarch64)
+            echo "arm64"
+            ;;
+        *)
+            error "Unsupported architecture for release asset: $1"
+            exit 1
+            ;;
+    esac
+}
+
 download() {
     local url="$1"
     local output="$2"
@@ -90,7 +111,12 @@ main() {
     version="$(fetch_latest_version)"
     info "Latest version: $version"
 
-    local asset_name="${APP_NAME}-${version}-linux-${arch}.AppImage"
+    # tauri-bundler names the AppImage from tauri.conf.json's bare version
+    # (no leading "v"), unlike the git tag / GitHub release name.
+    local bare_version="${version#v}"
+    local asset_arch
+    asset_arch="$(release_asset_arch "$arch")"
+    local asset_name="${APP_NAME}_${bare_version}_${asset_arch}.AppImage"
     local download_url="$BASE_URL/$REPO/releases/download/$version/$asset_name"
     local checksum_url="$download_url.sha256"
 
