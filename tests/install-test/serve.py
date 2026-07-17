@@ -9,11 +9,15 @@ import sys
 
 PORT = int(os.environ.get("PORT", "9876"))
 REPO = os.environ.get("REPO", "pdl-clay/zero-desktop")
-VERSION = os.environ.get("VERSION", "v0.1.0")
-ARCH = os.environ.get("ARCH", "x86_64")
+VERSION = os.environ.get("VERSION", "v0.1.0-alpha.1")
+ARCH = os.environ.get("ARCH", "amd64")  # dpkg-style, matches tauri-bundler's output
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-FAKE_APPIMAGE = os.path.join(HERE, "zero-desktop-v0.1.0-linux-x86_64.AppImage")
+# Mirrors tauri-bundler's actual naming: <productName>_<bare version>_<arch>.AppImage
+# (see src-tauri/tauri.conf.json + `npm run build:appimage`) - the bare version has
+# no leading "v", unlike the release tag/VERSION above.
+BARE_VERSION = VERSION.lstrip("v")
+FAKE_APPIMAGE = os.path.join(HERE, f"zero-desktop_{BARE_VERSION}_{ARCH}.AppImage")
 
 
 def ensure_fake_appimage():

@@ -10,6 +10,6 @@ AGENTS.md
 .agents
 
 # Test artifacts
-tests/install-test/zero-desktop-*.AppImage
-tests/install-test/zero-desktop-*.AppImage.sha256
+tests/install-test/zero-desktop_*.AppImage
+tests/install-test/zero-desktop_*.AppImage.sha256
 tests/install-test/scripts/install.sh

@@ -33,7 +33,7 @@ SERVER_PID=$!
 sleep 2
 
 # Verify server is up
-if ! curl -fsSL "$BASE_URL/pdl-clay/zero-desktop/releases/download/v0.1.0/zero-desktop-v0.1.0-linux-x86_64.AppImage" >/dev/null; then
+if ! curl -fsSL "$BASE_URL/pdl-clay/zero-desktop/releases/download/v0.1.0-alpha.1/zero-desktop_0.1.0-alpha.1_amd64.AppImage" >/dev/null; then
     echo "[test] Server did not start" >&2
     exit 1
 fi
@@ -45,7 +45,7 @@ for image in "${DISTROS[@]}"; do
     info "Testing on $image..."
     distro_name="${image%%:*}"
 
-    if ! podman run --rm --network host --hostname "$distro_name-test" -e "ZERO_DESKTOP_BASE_URL=$BASE_URL" -e "ZERO_DESKTOP_VERSION=v0.1.0" "$image" bash -c "
+    if ! podman run --rm --network host --hostname "$distro_name-test" -e "ZERO_DESKTOP_BASE_URL=$BASE_URL" -e "ZERO_DESKTOP_VERSION=v0.1.0-alpha.1" "$image" bash -c "
 set -e
 # Install dependencies
 case '$distro_name' in

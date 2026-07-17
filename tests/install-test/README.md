@@ -12,7 +12,7 @@ python3 tests/install-test/serve.py
 
 # Terminal 2: run install script against local server
 export ZERO_DESKTOP_BASE_URL=http://localhost:9876
-export ZERO_DESKTOP_VERSION=v0.1.0
+export ZERO_DESKTOP_VERSION=v0.1.0-alpha.1
 bash scripts/install.sh
 ```
 
