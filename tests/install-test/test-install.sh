@@ -70,12 +70,20 @@ if [[ ! -x \$HOME/.local/apps/zero-desktop/zero-desktop.AppImage ]]; then
     echo '[test] AppImage not installed'
     exit 1
 fi
-if [[ ! -L \$HOME/.local/bin/zero-desktop ]]; then
-    echo '[test] Symlink not created'
+if [[ ! -x \$HOME/.local/bin/zero-desktop ]]; then
+    echo '[test] Launcher wrapper not created'
+    exit 1
+fi
+if ! grep -q APPIMAGELAUNCHER_DISABLE \$HOME/.local/bin/zero-desktop; then
+    echo '[test] Launcher wrapper missing APPIMAGELAUNCHER_DISABLE workaround'
     exit 1
 fi
 if [[ ! -f \$HOME/.local/share/applications/zero-desktop.desktop ]]; then
     echo '[test] Desktop entry not created'
+    exit 1
+fi
+if ! grep -q APPIMAGELAUNCHER_DISABLE \$HOME/.local/share/applications/zero-desktop.desktop; then
+    echo '[test] Desktop entry missing APPIMAGELAUNCHER_DISABLE workaround'
     exit 1
 fi
 

@@ -142,21 +142,36 @@ main() {
     chmod +x "$appimage_path"
     info "Installed AppImage to $appimage_path"
 
-    # Ensure bin dir exists and create symlink
+    # Ensure bin dir exists and install a launcher wrapper (not a plain symlink -
+    # a symlink can't carry the APPIMAGELAUNCHER_DISABLE env var below).
     ensure_dir "$BIN_DIR"
-    if [[ -L "$BIN_DIR/$APP_NAME" ]]; then
-        rm "$BIN_DIR/$APP_NAME"
-    fi
-    ln -s "$appimage_path" "$BIN_DIR/$APP_NAME"
-    info "Created symlink $BIN_DIR/$APP_NAME"
+    cat > "$BIN_DIR/$APP_NAME" <<EOF
+#!/usr/bin/env bash
+# See the APPIMAGELAUNCHER_DISABLE note below.
+exec env APPIMAGELAUNCHER_DISABLE=1 "$appimage_path" "\$@"
+EOF
+    chmod +x "$BIN_DIR/$APP_NAME"
+    info "Created launcher $BIN_DIR/$APP_NAME"
 
     # Create .desktop entry
+    #
+    # APPIMAGELAUNCHER_DISABLE=1: if AppImageLauncher is installed, it registers
+    # a binfmt_misc handler that intercepts *any* AppImage execution and hands
+    # control to its own (Qt-based) integration-prompt GUI instead of actually
+    # running the AppImage. On systems missing that GUI's platform plugin (e.g.
+    # no qt5-wayland on a Wayland session) it just aborts, and the failure looks
+    # like a crash in zero-desktop itself (a Qt platform-plugin error, even
+    # though this app doesn't use Qt at all) instead of what it is - a
+    # completely unrelated launcher tool failing to start. This env var is
+    # AppImageLauncher's own documented escape hatch to run the AppImage
+    # directly, bypassing the interception (same fix used for the linuxdeploy
+    # subprocess during the build - see scripts/build-appimage.sh).
     ensure_dir "$APP_DIR"
     cat > "$DESKTOP_FILE" <<EOF
 [Desktop Entry]
 Name=Zero Desktop
 Comment=Desktop GUI for the zero coding agent
-Exec=$appimage_path %U
+Exec=env APPIMAGELAUNCHER_DISABLE=1 $appimage_path %U
 Icon=$APP_NAME
 Type=Application
 Terminal=false
