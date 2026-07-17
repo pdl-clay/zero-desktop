@@ -75,7 +75,11 @@ main() {
 
     local temp_dir
     temp_dir="$(mktemp -d)"
-    trap 'rm -rf "$temp_dir"' EXIT
+    # Double-quoted so $temp_dir expands now, while the local var is still in
+    # scope - a single-quoted trap defers expansion to EXIT time, which fires
+    # after main() has already returned and its locals are gone, so the trap
+    # would fail with "unbound variable" under set -u instead of cleaning up.
+    trap "rm -rf '$temp_dir'" EXIT
 
     info "downloading $asset..."
     download "$url" "$temp_dir/$asset"
