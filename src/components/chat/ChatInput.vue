@@ -62,186 +62,218 @@
         <q-icon name="attach_file" size="18px" />
         <q-tooltip>{{ t("chat.attachFile") }}</q-tooltip>
       </button>
-      <div class="chat-input__mode-wrap">
-        <button
-          type="button"
-          class="chat-input__mode"
-          :class="{
-            'chat-input__mode--active': sessionStore.sessionMode !== 'auto',
-            'chat-input__mode--collapsed': isNarrowViewport,
-          }"
+      <div class="chat-input__stack">
+        <textarea
+          ref="textareaRef"
+          v-model="localValue"
+          class="chat-input__textarea"
+          :placeholder="placeholder"
           :disabled="disabled"
-          @click="toggleModeMenu"
-        >
-          <q-icon :name="sessionModeIcon" size="14px" />
-          <span class="chat-input__mode-label">{{ sessionModeLabel }}</span>
-          <q-tooltip v-if="!modeMenuOpen">{{ sessionModeTooltip }}</q-tooltip>
-        </button>
-        <transition name="chat-input__model-fade">
-          <div
-            v-if="modeMenuOpen"
-            v-click-outside="closeModeMenu"
-            class="chat-input__mode-dropdown"
-          >
-            <div class="chat-input__model-header">{{ t("chat.modeMenuTitle") }}</div>
-            <div class="chat-input__model-separator" />
+          rows="1"
+          @keydown.enter="onEnterKey"
+          @input="autoResize"
+          @focus="onFocus"
+          @blur="focused = false"
+        />
+        <div class="chat-input__toolbar">
+          <div v-if="activeModelReasoningEfforts.length" class="chat-input__effort-wrap">
             <button
-              v-for="option in sessionModeOptions"
-              :key="option.value"
               type="button"
-              class="chat-input__mode-item"
+              class="chat-input__effort"
               :class="{
-                'chat-input__mode-item--active': sessionStore.sessionMode === option.value,
+                'chat-input__effort--active': sessionStore.reasoningEffort !== '',
+                'chat-input__effort--collapsed': isNarrowViewport,
               }"
-              @click="selectSessionMode(option.value)"
+              :disabled="disabled"
+              @click="toggleEffortMenu"
             >
-              <q-icon
-                :name="sessionStore.sessionMode === option.value ? 'check_circle' : option.icon"
-                size="16px"
-                :color="sessionStore.sessionMode === option.value ? 'primary' : 'grey-6'"
-              />
-              <span class="chat-input__mode-item-text">
-                <span class="chat-input__mode-item-label">{{ option.label }}</span>
-                <span class="chat-input__mode-item-desc">{{ option.description }}</span>
-              </span>
+              <q-icon name="psychology" size="14px" />
+              <span class="chat-input__effort-label">{{ effortLabel }}</span>
+              <q-tooltip v-if="!effortMenuOpen">{{ t("chat.effortTooltip") }}</q-tooltip>
             </button>
+            <transition name="chat-input__model-fade">
+              <div
+                v-if="effortMenuOpen"
+                v-click-outside="closeEffortMenu"
+                class="chat-input__effort-dropdown"
+              >
+                <div class="chat-input__model-header">{{ t("chat.effortLabel") }}</div>
+                <div class="chat-input__model-separator" />
+                <button
+                  v-for="option in effortOptions"
+                  :key="option.value"
+                  type="button"
+                  class="chat-input__effort-item"
+                  :class="{
+                    'chat-input__effort-item--active': currentEffort === option.value,
+                  }"
+                  @click="selectReasoningEffort(option.value)"
+                >
+                  <q-icon
+                    :name="
+                      currentEffort === option.value ? 'check_circle' : 'radio_button_unchecked'
+                    "
+                    size="16px"
+                    :color="currentEffort === option.value ? 'primary' : 'grey-6'"
+                  />
+                  <span class="chat-input__effort-item-label">{{ option.label }}</span>
+                </button>
+              </div>
+            </transition>
           </div>
-        </transition>
-      </div>
-      <div v-if="activeModelReasoningEfforts.length" class="chat-input__effort-wrap">
-        <q-btn-toggle
-          :model-value="sessionStore.reasoningEffort || 'auto'"
-          dense
-          unelevated
-          no-caps
-          toggle-color="primary"
-          size="sm"
-          :disabled="disabled"
-          :options="effortToggleOptions"
-          @update:model-value="selectReasoningEffort"
-        >
-          <q-tooltip anchor="top middle" self="bottom middle">{{
-            t("chat.effortTooltip")
-          }}</q-tooltip>
-        </q-btn-toggle>
-      </div>
-      <div class="chat-input__advisor-wrap">
-        <div
-          class="chat-input__advisor-pill"
-          :class="{
-            'chat-input__advisor-pill--active': sessionStore.advisorEnabled,
-            'chat-input__advisor-pill--collapsed': isNarrowViewport,
-          }"
-        >
-          <button
-            type="button"
-            class="chat-input__advisor-toggle"
-            :disabled="disabled"
-            @click="toggleAdvisorMode"
-          >
-            <q-icon name="auto_awesome" size="14px" />
-            <span class="chat-input__advisor-toggle-label">{{ advisorModeLabel }}</span>
-            <q-tooltip>{{ t("chat.advisorTooltip") }}</q-tooltip>
-          </button>
-          <template v-if="sessionStore.advisorEnabled">
-            <div class="chat-input__advisor-divider" />
+          <div class="chat-input__advisor-wrap">
+            <div
+              class="chat-input__advisor-pill"
+              :class="{
+                'chat-input__advisor-pill--active': sessionStore.advisorEnabled,
+                'chat-input__advisor-pill--collapsed': isNarrowViewport,
+              }"
+            >
+              <button
+                type="button"
+                class="chat-input__advisor-toggle"
+                :disabled="disabled"
+                @click="toggleAdvisorMode"
+              >
+                <q-icon name="auto_awesome" size="14px" />
+                <span class="chat-input__advisor-toggle-label">{{ advisorModeLabel }}</span>
+                <q-tooltip>{{ t("chat.advisorTooltip") }}</q-tooltip>
+              </button>
+              <template v-if="sessionStore.advisorEnabled">
+                <div class="chat-input__advisor-divider" />
+                <button
+                  type="button"
+                  class="chat-input__advisor-gear"
+                  :disabled="disabled"
+                  @click="toggleAdvisorSettings"
+                >
+                  <q-icon name="settings" size="13px" />
+                  <q-tooltip>{{ t("chat.advisorSettings") }}</q-tooltip>
+                </button>
+              </template>
+            </div>
+            <transition name="chat-input__model-fade">
+              <div
+                v-if="advisorSettingsOpen"
+                v-click-outside="closeAdvisorSettings"
+                class="chat-input__advisor-settings-popup"
+              >
+                <div class="chat-input__model-header">{{ t("chat.advisorSettingsTitle") }}</div>
+                <div class="chat-input__model-separator" />
+                <div class="chat-input__advisor-settings-row">
+                  <span class="chat-input__advisor-settings-label">{{
+                    t("chat.executorModelLabel")
+                  }}</span>
+                  <ModelPickerDropdown
+                    :model-value="effectiveActiveModel"
+                    :placeholder-label="t('chat.modelLabel')"
+                    :disabled="disabled"
+                    show-recents
+                    recents-storage-key="zero-recent-models"
+                    @update:model-value="selectModel"
+                  />
+                </div>
+                <div class="chat-input__advisor-settings-row">
+                  <span class="chat-input__advisor-settings-label">{{
+                    t("chat.advisorModelLabel")
+                  }}</span>
+                  <ModelPickerDropdown
+                    :model-value="sessionStore.advisorModel"
+                    :placeholder-label="t('chat.advisorModelDefault')"
+                    :title="t('chat.advisorModelLabel')"
+                    :disabled="disabled"
+                    allow-clear
+                    @update:model-value="selectAdvisorModel"
+                  />
+                </div>
+                <div class="chat-input__advisor-settings-row">
+                  <span class="chat-input__advisor-settings-label">{{
+                    t("chat.advisorTriggerModeLabel")
+                  }}</span>
+                  <q-btn-toggle
+                    :model-value="sessionStore.advisorMode"
+                    dense
+                    unelevated
+                    no-caps
+                    toggle-color="primary"
+                    size="sm"
+                    :disabled="disabled"
+                    :options="[
+                      { label: t('chat.advisorModeMax'), value: 'max' },
+                      { label: t('chat.advisorModeLow'), value: 'low' },
+                    ]"
+                    @update:model-value="selectAdvisorMode"
+                  >
+                    <q-tooltip anchor="top middle" self="bottom middle">
+                      {{
+                        sessionStore.advisorMode === "low"
+                          ? t("chat.advisorModeLowTooltip")
+                          : t("chat.advisorModeMaxTooltip")
+                      }}
+                    </q-tooltip>
+                  </q-btn-toggle>
+                </div>
+              </div>
+            </transition>
+          </div>
+          <div class="chat-input__mode-wrap">
             <button
               type="button"
-              class="chat-input__advisor-gear"
+              class="chat-input__mode"
+              :class="{
+                'chat-input__mode--active': sessionStore.sessionMode !== 'auto',
+                'chat-input__mode--collapsed': isNarrowViewport,
+              }"
               :disabled="disabled"
-              @click="toggleAdvisorSettings"
+              @click="toggleModeMenu"
             >
-              <q-icon name="settings" size="13px" />
-              <q-tooltip>{{ t("chat.advisorSettings") }}</q-tooltip>
+              <q-icon :name="sessionModeIcon" size="14px" />
+              <span class="chat-input__mode-label">{{ sessionModeLabel }}</span>
+              <q-tooltip v-if="!modeMenuOpen">{{ sessionModeTooltip }}</q-tooltip>
             </button>
-          </template>
-        </div>
-        <transition name="chat-input__model-fade">
-          <div
-            v-if="advisorSettingsOpen"
-            v-click-outside="closeAdvisorSettings"
-            class="chat-input__advisor-settings-popup"
-          >
-            <div class="chat-input__model-header">{{ t("chat.advisorSettingsTitle") }}</div>
-            <div class="chat-input__model-separator" />
-            <div class="chat-input__advisor-settings-row">
-              <span class="chat-input__advisor-settings-label">{{
-                t("chat.executorModelLabel")
-              }}</span>
-              <ModelPickerDropdown
-                :model-value="effectiveActiveModel"
-                :placeholder-label="t('chat.modelLabel')"
-                :disabled="disabled"
-                show-recents
-                recents-storage-key="zero-recent-models"
-                @update:model-value="selectModel"
-              />
-            </div>
-            <div class="chat-input__advisor-settings-row">
-              <span class="chat-input__advisor-settings-label">{{
-                t("chat.advisorModelLabel")
-              }}</span>
-              <ModelPickerDropdown
-                :model-value="sessionStore.advisorModel"
-                :placeholder-label="t('chat.advisorModelDefault')"
-                :title="t('chat.advisorModelLabel')"
-                :disabled="disabled"
-                allow-clear
-                @update:model-value="selectAdvisorModel"
-              />
-            </div>
-            <div class="chat-input__advisor-settings-row">
-              <span class="chat-input__advisor-settings-label">{{
-                t("chat.advisorTriggerModeLabel")
-              }}</span>
-              <q-btn-toggle
-                :model-value="sessionStore.advisorMode"
-                dense
-                unelevated
-                no-caps
-                toggle-color="primary"
-                size="sm"
-                :disabled="disabled"
-                :options="[
-                  { label: t('chat.advisorModeMax'), value: 'max' },
-                  { label: t('chat.advisorModeLow'), value: 'low' },
-                ]"
-                @update:model-value="selectAdvisorMode"
+            <transition name="chat-input__model-fade">
+              <div
+                v-if="modeMenuOpen"
+                v-click-outside="closeModeMenu"
+                class="chat-input__mode-dropdown"
               >
-                <q-tooltip anchor="top middle" self="bottom middle">
-                  {{
-                    sessionStore.advisorMode === "low"
-                      ? t("chat.advisorModeLowTooltip")
-                      : t("chat.advisorModeMaxTooltip")
-                  }}
-                </q-tooltip>
-              </q-btn-toggle>
-            </div>
+                <div class="chat-input__model-header">{{ t("chat.modeMenuTitle") }}</div>
+                <div class="chat-input__model-separator" />
+                <button
+                  v-for="option in sessionModeOptions"
+                  :key="option.value"
+                  type="button"
+                  class="chat-input__mode-item"
+                  :class="{
+                    'chat-input__mode-item--active': sessionStore.sessionMode === option.value,
+                  }"
+                  @click="selectSessionMode(option.value)"
+                >
+                  <q-icon
+                    :name="sessionStore.sessionMode === option.value ? 'check_circle' : option.icon"
+                    size="16px"
+                    :color="sessionStore.sessionMode === option.value ? 'primary' : 'grey-6'"
+                  />
+                  <span class="chat-input__mode-item-text">
+                    <span class="chat-input__mode-item-label">{{ option.label }}</span>
+                    <span class="chat-input__mode-item-desc">{{ option.description }}</span>
+                  </span>
+                </button>
+              </div>
+            </transition>
           </div>
-        </transition>
+          <ModelPickerDropdown
+            v-if="!sessionStore.advisorEnabled"
+            :model-value="effectiveActiveModel"
+            :placeholder-label="t('chat.modelLabel')"
+            :disabled="disabled"
+            :collapsed="isNarrowViewport"
+            show-recents
+            recents-storage-key="zero-recent-models"
+            @update:model-value="selectModel"
+          />
+        </div>
       </div>
-      <ModelPickerDropdown
-        v-if="!sessionStore.advisorEnabled"
-        :model-value="effectiveActiveModel"
-        :placeholder-label="t('chat.modelLabel')"
-        :disabled="disabled"
-        :collapsed="isNarrowViewport"
-        show-recents
-        recents-storage-key="zero-recent-models"
-        @update:model-value="selectModel"
-      />
-      <textarea
-        ref="textareaRef"
-        v-model="localValue"
-        class="chat-input__textarea"
-        :placeholder="placeholder"
-        :disabled="disabled"
-        rows="1"
-        @keydown.enter="onEnterKey"
-        @input="autoResize"
-        @focus="onFocus"
-        @blur="focused = false"
-      />
       <button
         type="button"
         class="chat-input__send"
@@ -302,6 +334,7 @@ const attachedFile = computed({
 const pickingFile = ref(false);
 const advisorSettingsOpen = ref(false);
 const modeMenuOpen = ref(false);
+const effortMenuOpen = ref(false);
 
 const paneWidth = inject("paneWidth", ref(9999));
 // Same threshold as ChatView.vue's PANE_NARROW_THRESHOLD - kept in sync so
@@ -379,13 +412,18 @@ const effortLabels = {
   max: "chat.effortMax",
 };
 
-const effortToggleOptions = computed(() => [
+const effortOptions = computed(() => [
   { label: t("chat.effortAuto"), value: "auto" },
   ...activeModelReasoningEfforts.value.map((tier) => ({
     label: effortLabels[tier] ? t(effortLabels[tier]) : tier,
     value: tier,
   })),
 ]);
+
+const currentEffort = computed(() => sessionStore.reasoningEffort || "auto");
+const effortLabel = computed(
+  () => effortOptions.value.find((option) => option.value === currentEffort.value)?.label,
+);
 
 // Load eagerly on mount instead of only on first click of the model picker,
 // so the menu is already populated by the time the user opens it - the
@@ -557,6 +595,14 @@ function selectSessionMode(mode) {
   sessionStore.setMode(mode);
 }
 
+function toggleEffortMenu() {
+  effortMenuOpen.value = !effortMenuOpen.value;
+}
+
+function closeEffortMenu() {
+  effortMenuOpen.value = false;
+}
+
 function toggleAdvisorMode() {
   const nextEnabled = !sessionStore.advisorEnabled;
   sessionStore.toggleAdvisor(nextEnabled);
@@ -581,6 +627,8 @@ function selectModel(model) {
 }
 
 function selectReasoningEffort(effort) {
+  closeEffortMenu();
+  if (effort === currentEffort.value) return;
   sessionStore.switchEffort(effort === "auto" ? "" : effort);
 }
 
@@ -611,9 +659,27 @@ defineExpose({ focus: () => textareaRef.value?.focus() });
 
 .chat-input__row {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   gap: 8px;
   padding: 6px 6px 6px 16px;
+}
+
+/* Second floor: textarea on top, toolbar (effort/advisor/mode/model/send)
+   below - the attach button (outside this stack) centers vertically against
+   the stack's full height via .chat-input__row's align-items: center. */
+.chat-input__stack {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.chat-input__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .chat-input__plan {
@@ -853,7 +919,7 @@ defineExpose({ focus: () => textareaRef.value?.focus() });
 }
 
 .chat-input__textarea {
-  flex: 1;
+  width: 100%;
   resize: none;
   border: none;
   outline: none;
@@ -955,9 +1021,138 @@ defineExpose({ focus: () => textareaRef.value?.focus() });
 }
 
 .chat-input__effort-wrap {
+  position: relative;
   display: inline-flex;
   align-items: center;
   flex-shrink: 0;
+}
+
+/* Same border/radius/height/hover/active treatment as .chat-input__mode - see
+   that block's comment for the shared reasoning. */
+.chat-input__effort {
+  flex-shrink: 0;
+  height: 34px;
+  width: auto;
+  max-width: 140px;
+  padding: 0 10px 0 8px;
+  border-radius: 17px;
+  border: 1px solid rgba(128, 128, 128, 0.22);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: transparent;
+  color: rgba(128, 128, 128, 0.9);
+  cursor: pointer;
+  font-size: 0.82em;
+  font-weight: 500;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    transform 0.1s ease,
+    width 0.5s ease,
+    max-width 0.5s ease,
+    padding 0.5s ease;
+}
+
+.chat-input__effort:hover:not(:disabled) {
+  background: rgba(128, 128, 128, 0.08);
+  border-color: rgba(128, 128, 128, 0.32);
+}
+
+.chat-input__effort:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.chat-input__effort:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.chat-input__effort--active {
+  color: var(--q-primary, #1976d2);
+  border-color: rgba(25, 118, 210, 0.35);
+  background: rgba(25, 118, 210, 0.06);
+}
+
+.chat-input__effort--active:hover:not(:disabled) {
+  background: rgba(25, 118, 210, 0.12);
+  border-color: rgba(25, 118, 210, 0.45);
+}
+
+.chat-input__effort--collapsed {
+  width: 34px;
+  max-width: 34px;
+  padding: 0;
+  justify-content: center;
+}
+
+.chat-input__effort--collapsed .chat-input__effort-label {
+  max-width: 0;
+  opacity: 0;
+  margin-left: -5px;
+}
+
+.chat-input__effort-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+  max-width: 90px;
+  opacity: 1;
+  transition:
+    max-width 0.5s ease,
+    opacity 0.35s ease,
+    margin 0.35s ease;
+}
+
+.chat-input__effort-dropdown {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 6000;
+  min-width: 180px;
+  max-width: 240px;
+  display: flex;
+  flex-direction: column;
+  padding: 6px 0;
+  border-radius: 12px;
+  background: rgba(30, 30, 30, 0.5);
+  border: 1px solid rgba(128, 128, 128, 0.18);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  overflow: hidden;
+}
+
+.chat-input__effort-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: calc(100% - 16px);
+  min-height: 36px;
+  padding: 8px 16px;
+  margin: 2px 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s ease;
+}
+
+.chat-input__effort-item:hover {
+  background: rgba(128, 128, 128, 0.12);
+}
+
+.chat-input__effort-item--active {
+  background: rgba(25, 118, 210, 0.1);
+}
+
+.chat-input__effort-item-label {
+  font-size: 0.86em;
+  font-weight: 500;
+  color: var(--chat-text);
 }
 
 .chat-input__mode-dropdown {
