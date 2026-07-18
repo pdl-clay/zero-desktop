@@ -3,6 +3,7 @@ pub mod advisor;
 pub mod bridge;
 pub mod locator;
 pub mod mcp_cache;
+pub mod providers;
 pub mod terminal;
 
 use bridge::{history_path_for, LiveSessionInfo, StartedSession, ZeroBridge};
@@ -912,6 +913,36 @@ async fn set_session_advisor_config(
     state.set_advisor_config(&key, config).await
 }
 
+#[tauri::command]
+async fn list_zero_provider_catalog() -> Result<Vec<providers::ProviderCatalogEntry>, String> {
+    providers::catalog().await
+}
+
+#[tauri::command]
+async fn list_zero_providers() -> Result<Vec<providers::ConfiguredProvider>, String> {
+    providers::list_configured().await
+}
+
+#[tauri::command]
+async fn add_zero_provider(req: providers::AddProviderRequest) -> Result<(), String> {
+    providers::add(&req).await
+}
+
+#[tauri::command]
+async fn remove_zero_provider(name: String) -> Result<(), String> {
+    providers::remove(&name).await
+}
+
+#[tauri::command]
+async fn use_zero_provider(name: String) -> Result<(), String> {
+    providers::use_provider(&name).await
+}
+
+#[tauri::command]
+async fn check_zero_provider(name: String, connectivity: bool) -> Result<providers::ProviderCheckResult, String> {
+    providers::check(&name, connectivity).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -972,7 +1003,13 @@ pub fn run() {
             toggle_advisor,
             set_advisor_model,
             get_session_advisor_config,
-            set_session_advisor_config
+            set_session_advisor_config,
+            list_zero_provider_catalog,
+            list_zero_providers,
+            add_zero_provider,
+            remove_zero_provider,
+            use_zero_provider,
+            check_zero_provider
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

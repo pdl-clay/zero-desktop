@@ -101,7 +101,16 @@
             }}</q-tooltip>
           </q-btn>
 
-          <q-btn flat round dense icon="settings" color="grey-7" size="sm" class="q-mt-xs q-mb-xs">
+          <q-btn
+            flat
+            round
+            dense
+            icon="settings"
+            color="grey-7"
+            size="sm"
+            class="q-mt-xs q-mb-xs"
+            @click="settingsDialogOpen = true"
+          >
             <q-tooltip>{{ $t("settings.title") }}</q-tooltip>
           </q-btn>
         </div>
@@ -235,6 +244,8 @@
       v-model="mcpDrawerOpen"
     />
 
+    <SettingsDialog v-model="settingsDialogOpen" />
+
     <TerminalPanel v-if="workspacesStore.hasActive" />
   </q-layout>
 </template>
@@ -254,6 +265,7 @@ import {
 } from "@/services/zero";
 import SessionTileGrid from "@/components/SessionTileGrid.vue";
 import McpDrawer from "@/components/McpDrawer.vue";
+import SettingsDialog from "@/components/settings/SettingsDialog.vue";
 import TerminalPanel from "@/components/terminal/TerminalPanel.vue";
 import FileExplorerTree from "@/components/explorer/FileExplorerTree.vue";
 import StatusBadge from "@/components/StatusBadge.vue";
@@ -268,6 +280,7 @@ const workspacesStore = useWorkspacesStore();
 const sessionRuntime = useSessionRuntimeStore();
 const leftDrawerOpen = ref(true);
 const mcpDrawerOpen = ref($q.screen.width >= 1024);
+const settingsDialogOpen = ref(false);
 
 const isSmallScreen = $q.screen.lt.md;
 const sessionPanelOpen = ref(!isSmallScreen);

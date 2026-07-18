@@ -340,3 +340,71 @@ export async function getSessionAdvisorConfig(key) {
 export async function setSessionAdvisorConfig(key, config) {
   return invoke("set_session_advisor_config", { key, config });
 }
+
+/**
+ * List the zero CLI's provider catalog (all providers it knows how to add,
+ * including the two "custom-*-compatible" entries used for a fully custom
+ * endpoint).
+ * @returns {Promise<Array<{ id: string, name: string, transport: string, defaultBaseUrl: string, defaultModel: string, authEnvVars: string[], requiresAuth: boolean, local: boolean, runtimeSupported: boolean, recommended: boolean }>>}
+ */
+export async function listZeroProviderCatalog() {
+  return invoke("list_zero_provider_catalog");
+}
+
+/**
+ * List the provider profiles already configured in the zero CLI's own config.
+ * @returns {Promise<Array<{ name: string, providerKind: string, baseUrl: string, model: string, apiModel: string, active: boolean, apiKeySet: boolean, status: string | null }>>}
+ */
+export async function listZeroProviders() {
+  return invoke("list_zero_providers");
+}
+
+/**
+ * Add (or update in place, if the name already exists) a provider profile.
+ * `authHeaderValue` is the raw API key - never persisted by zero-desktop
+ * itself, only forwarded to the zero CLI process.
+ * @param {{ catalogId: string, name: string, model?: string, baseUrl?: string, apiKeyEnv?: string, authHeader?: string, authScheme?: string, authHeaderValue?: string, headers?: Array<[string, string]>, setActive?: boolean }} req
+ */
+export async function addZeroProvider(req) {
+  return invoke("add_zero_provider", {
+    req: {
+      catalog_id: req.catalogId,
+      name: req.name,
+      model: req.model ?? null,
+      base_url: req.baseUrl ?? null,
+      api_key_env: req.apiKeyEnv ?? null,
+      auth_header: req.authHeader ?? null,
+      auth_scheme: req.authScheme ?? null,
+      auth_header_value: req.authHeaderValue ?? null,
+      headers: req.headers ?? [],
+      set_active: req.setActive ?? false,
+    },
+  });
+}
+
+/**
+ * Remove a configured provider profile.
+ * @param {string} name
+ */
+export async function removeZeroProvider(name) {
+  return invoke("remove_zero_provider", { name });
+}
+
+/**
+ * Activate a configured provider profile. Changes the active provider
+ * globally, for every `zero` process on this machine.
+ * @param {string} name
+ */
+export async function useZeroProvider(name) {
+  return invoke("use_zero_provider", { name });
+}
+
+/**
+ * Check a configured provider profile's config (and, optionally, live
+ * connectivity).
+ * @param {string} name
+ * @param {boolean} [connectivity]
+ */
+export async function checkZeroProvider(name, connectivity = false) {
+  return invoke("check_zero_provider", { name, connectivity });
+}

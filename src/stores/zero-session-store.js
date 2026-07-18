@@ -44,10 +44,13 @@ function nextId() {
 // starts with advisor off by default, same as before), but once the user
 // turns it on, the model/mode pickers should already reflect their last
 // choice instead of coming up blank/default every time the app restarts.
-// Backend session config (see _loadAdvisorConfig) can't carry this alone:
-// each session key is independent, and a genuinely new session's backend
-// config is always the {model: null, mode: "max"} default - there's no
-// "last used" concept on that side to fall back to.
+// Backend session config (see _loadAdvisorConfig) can't carry this alone for
+// a panel that hasn't connected yet (deferred until the first sendMessage,
+// see startSession) - there's no session for the backend to have an opinion
+// about. Until the user has explicitly picked a model/mode at least once
+// (see hasExplicitAdvisorPreference), toggleAdvisor adopts the Settings
+// dialog's global default (zeroStore.defaultAdvisorConfig) instead, so the
+// settings popup doesn't come up blank the first time advisor is turned on.
 const ADVISOR_PREFS_STORAGE_KEY = "zero-advisor-preferences";
 
 function loadAdvisorPreferences() {
@@ -71,6 +74,19 @@ function saveAdvisorPreferences({ model, mode }) {
     // Best-effort - localStorage can throw in private-browsing-like
     // contexts or when full; losing the "remember my last choice"
     // convenience isn't worth surfacing an error to the user over.
+  }
+}
+
+// Whether the user has ever explicitly picked an advisor model/mode (via the
+// picker in ChatInput's settings popup or the Settings dialog's own model
+// picker, both of which call saveAdvisorPreferences). Distinguishes "no
+// opinion yet" from "explicitly chose the default" so toggleAdvisor below
+// knows when it's still safe to adopt the Settings dialog's global default.
+function hasExplicitAdvisorPreference() {
+  try {
+    return localStorage.getItem(ADVISOR_PREFS_STORAGE_KEY) !== null;
+  } catch {
+    return false;
   }
 }
 
@@ -525,6 +541,17 @@ export function useZeroSessionStore(key) {
        * @param {boolean} enabled
        */
       async toggleAdvisor(enabled) {
+        // The user hasn't explicitly picked an advisor model/mode for any
+        // panel yet (loadAdvisorPreferences seeded model/mode from nothing),
+        // so turning advisor on here should adopt the Settings dialog's
+        // global default instead of coming up with model=null/mode="max" -
+        // see hasExplicitAdvisorPreference and defaultAdvisorConfig.
+        if (enabled && !hasExplicitAdvisorPreference()) {
+          const globalStore = useZeroStore();
+          const defaults = await globalStore.loadDefaultAdvisorConfig();
+          this.advisorModel = defaults.model ?? this.advisorModel;
+          this.advisorMode = defaults.mode || this.advisorMode;
+        }
         this.advisorEnabled = enabled;
         // A panel can sit open without a live backend process (see
         // prepareSession - the real connection is deferred to the first

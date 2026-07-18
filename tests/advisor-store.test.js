@@ -196,18 +196,32 @@ console.log("\ntoggleAdvisor/setAdvisorModel before vs. after connect (mirrored)
 
 // Stand-in for localStorage - Node has no global localStorage by default, so
 // this mirrors loadAdvisorPreferences/saveAdvisorPreferences from
-// zero-session-store.js as a plain module-scoped object instead.
-function createPrefsStorage(initial = { model: null, mode: "max" }) {
+// zero-session-store.js as a plain module-scoped object instead. Also tracks
+// whether the key was ever explicitly written (hasExplicit), mirroring
+// hasExplicitAdvisorPreference()'s `localStorage.getItem(...) !== null`
+// check - distinct from "value happens to be null", which is what an
+// allow-clear pick of "no model" also produces.
+function createPrefsStorage(initial = { model: null, mode: "max" }, { hasExplicit = false } = {}) {
   let prefs = initial;
+  let explicit = hasExplicit;
   return {
     load: () => prefs,
     save: (next) => {
       prefs = next;
+      explicit = true;
     },
+    hasExplicit: () => explicit,
   };
 }
 
-function createAdvisorAwareStore(prefsStorage = createPrefsStorage()) {
+// globalDefault stands in for zeroStore.defaultAdvisorConfig (the Settings
+// dialog's "General" tab default, fetched via getAdvisorConfig/set via
+// setAdvisorConfig). loadDefaultAdvisorConfigCalls counts how many times
+// toggleAdvisor reached for it, mirroring zeroStore.loadDefaultAdvisorConfig.
+function createAdvisorAwareStore(
+  prefsStorage = createPrefsStorage(),
+  globalDefault = { enabled: false, model: null, mode: "max" },
+) {
   const initial = prefsStorage.load();
   return {
     isConnected: false,
@@ -217,7 +231,17 @@ function createAdvisorAwareStore(prefsStorage = createPrefsStorage()) {
     _advisorConfigDirty: false,
     backendConfig: null, // what the "backend" thinks this session's config is
     backendCalls: 0,
+    loadDefaultAdvisorConfigCalls: 0,
     async toggleAdvisor(enabled) {
+      // Mirrors toggleAdvisor's global-default adoption: the first time
+      // advisor is turned on for a panel that never had an explicit local
+      // choice, pull in the Settings dialog's default instead of leaving
+      // advisorModel/advisorMode at their bare seed values.
+      if (enabled && !prefsStorage.hasExplicit()) {
+        this.loadDefaultAdvisorConfigCalls++;
+        this.advisorModel = globalDefault.model ?? this.advisorModel;
+        this.advisorMode = globalDefault.mode || this.advisorMode;
+      }
       this.advisorEnabled = enabled;
       if (!this.isConnected) {
         this._advisorConfigDirty = true;
@@ -343,6 +367,81 @@ resumedSession.backendConfig = { enabled: true, model: "gpt-5", mode: "low" };
 resumedSession.connect();
 assertEquals(resumedSession.advisorMode, "low", "an enabled backend config's mode is adopted");
 assertEquals(resumedSession.advisorModel, "gpt-5", "an enabled backend config's model is adopted");
+
+// --- toggleAdvisor adopts the Settings dialog's global default (mirrored) ---
+// Regression test for the reported bug: enable+configure the advisor default
+// in the Settings dialog (model + trigger mode), then open a chat panel that
+// never had its own opinion yet and turn advisor on there via the pill
+// toggle - the settings popup's model picker must show the model chosen in
+// the dialog, not come up blank. See toggleAdvisor in
+// src/stores/zero-session-store.js and defaultAdvisorConfig in
+// src/stores/zero-store.js.
+console.log("\ntoggleAdvisor adopts the global Settings-dialog default (mirrored):");
+
+const globalDefault = { enabled: true, model: "claude-opus-4-8", mode: "low" };
+
+const freshPanelPreConnect = createAdvisorAwareStore(createPrefsStorage(), globalDefault);
+assertEquals(freshPanelPreConnect.advisorModel, null, "before toggling, the panel still shows no model (bug's starting point)");
+freshPanelPreConnect.toggleAdvisor(true);
+assertEquals(
+  freshPanelPreConnect.advisorModel,
+  "claude-opus-4-8",
+  "toggling advisor on adopts the Settings dialog's default model",
+);
+assertEquals(
+  freshPanelPreConnect.advisorMode,
+  "low",
+  "toggling advisor on also adopts the Settings dialog's default trigger mode",
+);
+assertEquals(freshPanelPreConnect.loadDefaultAdvisorConfigCalls, 1, "reaches for the global default exactly once");
+
+freshPanelPreConnect.connect();
+assertEquals(
+  freshPanelPreConnect.backendConfig.model,
+  "claude-opus-4-8",
+  "the adopted default (not null) is what eventually gets pushed to the backend once connected",
+);
+
+// Already-connected panel (e.g. a message was already sent) takes the same
+// path - not just the pre-connect/dirty branch.
+const freshPanelConnected = createAdvisorAwareStore(createPrefsStorage(), globalDefault);
+freshPanelConnected.isConnected = true;
+freshPanelConnected.toggleAdvisor(true);
+assertEquals(
+  freshPanelConnected.advisorModel,
+  "claude-opus-4-8",
+  "an already-connected panel also adopts the global default on first toggle",
+);
+assertEquals(
+  freshPanelConnected.backendConfig.model,
+  "claude-opus-4-8",
+  "the adopted default is pushed to the backend immediately when already connected",
+);
+
+// A panel where the user has explicitly chosen a model before (even a
+// different one, even null via allow-clear) must keep its own choice -
+// the global default is strictly a fallback for "no opinion yet".
+const explicitChoiceStorage = createPrefsStorage();
+const panelWithChoice = createAdvisorAwareStore(explicitChoiceStorage, globalDefault);
+panelWithChoice.setAdvisorModel("gpt-5-mini");
+panelWithChoice.toggleAdvisor(true);
+assertEquals(
+  panelWithChoice.advisorModel,
+  "gpt-5-mini",
+  "a panel with its own explicit model choice is not overridden by the global default",
+);
+assertEquals(
+  panelWithChoice.loadDefaultAdvisorConfigCalls,
+  0,
+  "an explicit local choice never reaches for the global default at all",
+);
+
+// Turning advisor OFF must never reach for the global default either - only
+// enabling it should.
+const offPanel = createAdvisorAwareStore(createPrefsStorage(), globalDefault);
+offPanel.toggleAdvisor(false);
+assertEquals(offPanel.loadDefaultAdvisorConfigCalls, 0, "toggling off does not adopt the global default");
+assertEquals(offPanel.advisorModel, null, "toggling off leaves the model untouched");
 
 // --- Summary ---
 console.log(`\n${passed} passed, ${failed} failed`);
