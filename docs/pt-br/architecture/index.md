@@ -19,6 +19,7 @@ Esta seção reúne as decisões e o design de alto nível do **zero-desktop**.
 ## Distribuição
 
 - [Guia de Instalação no Linux](../distribution/linux-installation.md)
+- [Publicando releases do zero-desktop](../distribution/releasing.md)
 
 ## Funcionalidades
 

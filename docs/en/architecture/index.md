@@ -19,6 +19,7 @@ This section collects high-level design decisions and architecture for **zero-de
 ## Distribution
 
 - [Linux Installation Guide](../distribution/linux-installation.md)
+- [Releasing zero-desktop](../distribution/releasing.md)
 
 ## Features
 
