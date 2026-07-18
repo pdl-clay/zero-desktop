@@ -1,38 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Builds the Linux AppImage bundle with the my-zero sidecar embedded
-# (bundle.externalBin in src-tauri/tauri.conf.json).
+# Thin wrapper: enters the local "dev" distrobox container (Fedora 43) and
+# runs the actual build recipe from scripts/build-appimage-in-container.sh
+# there. See that script's header for why Fedora 43 specifically, and
+# AGENTS.md rule 7 for the underlying host-build bug this works around.
 #
-# ALWAYS builds inside the "dev" distrobox container (Fedora), never
-# directly on the host. This isn't just about avoiding AppImageLauncher
-# build-time interference (see APPIMAGELAUNCHER_DISABLE below) - an
-# AppImage built directly on this host's bleeding-edge toolchain/glibc
-# was broken at *runtime* in a way that never showed an error: the
-# AppImage runtime process looped forever re-exec'ing itself
-# (env -> bash -> env -> ...) at ~98% CPU and never got the actual app
-# running. The exact same app, built inside the Fedora container instead,
-# ran fine. Root cause not fully understood, but reproducible - so the
-# rule is simply: never build the release AppImage on the host directly.
-#
-# Two environment workarounds are still needed for the build itself
-# (both apply inside the container too, and are harmless if not needed):
-#
-#   - APPIMAGELAUNCHER_DISABLE=1: if AppImageLauncher is installed, it
-#     intercepts *any* AppImage execution via a binfmt_misc handler and pops
-#     up a GUI integration dialog. Tauri's bundler runs the linuxdeploy
-#     AppImage (and its plugin AppImages) as subprocesses while packaging;
-#     without a display those get hijacked and abort (SIGABRT), failing the
-#     whole build with "failed to run linuxdeploy". This variable is
-#     AppImageLauncher's own documented escape hatch to run the AppImage
-#     directly instead of intercepting it.
-#   - NO_STRIP=1: linuxdeploy bundles its own (old) copy of GNU strip, which
-#     doesn't recognize the `.relr.dyn` ELF section emitted by newer
-#     toolchains/glibc - this affects Fedora 43's own libraries too, not
-#     just this host's. Left on, it aborts trying to strip perfectly valid
-#     modern system libraries. Skipping the strip step just leaves debug
-#     symbols in the bundled libraries (larger AppImage, no functional
-#     difference).
+# If TAURI_SIGNING_PRIVATE_KEY[_PASSWORD] are set in this shell's
+# environment (needed for a signed build - see docs/en/architecture/
+# decisions/005-tauri-updater-for-appimage-self-update.md), they are
+# forwarded into the container explicitly, since distrobox does not import
+# the host's environment by default.
 #
 # Usage: scripts/build-appimage.sh
 
@@ -51,45 +29,8 @@ if ! distrobox list 2>/dev/null | awk -F'|' '{gsub(/ /,"",$2); print $2}' | grep
     exit 1
 fi
 
-echo "[build-appimage] ensuring build dependencies are present in the '$CONTAINER' container..."
-distrobox enter "$CONTAINER" -- bash -c '
-set -euo pipefail
-missing=()
-for pkg_check in "node:nodejs" "cc:gcc" "patchelf:patchelf" "mksquashfs:squashfs-tools" "file:file"; do
-    bin="${pkg_check%%:*}"; pkg="${pkg_check##*:}"
-    command -v "$bin" >/dev/null 2>&1 || missing+=("$pkg")
-done
-pkg-config --exists gtk+-3.0 2>/dev/null || missing+=("gtk3-devel")
-pkg-config --exists webkit2gtk-4.1 2>/dev/null || missing+=("webkit2gtk4.1-devel")
-pkg-config --exists javascriptcoregtk-4.1 2>/dev/null || missing+=("javascriptcoregtk4.1-devel")
-pkg-config --exists librsvg-2.0 2>/dev/null || missing+=("librsvg2-devel")
-[[ -f /usr/lib64/libfuse.so.2 || -f /usr/lib/libfuse.so.2 ]] || missing+=("fuse" "fuse-libs")
-if [[ ${#missing[@]} -gt 0 ]]; then
-    echo "[build-appimage] installing missing packages: ${missing[*]}"
-    sudo dnf install -y "${missing[@]}"
-fi
-'
-
-echo "[build-appimage] checking sidecar..."
-distrobox enter "$CONTAINER" -- bash -c "
-set -euo pipefail
-cd '$PROJECT_DIR'
-triple=\"\$(rustc -vV | sed -n 's/^host: //p')\"
-sidecar=\"src-tauri/binaries/zero-\$triple\"
-if [[ ! -f \"\$sidecar\" ]]; then
-    echo '[build-appimage] sidecar not found at '\"\$sidecar\"', fetching...'
-    ./scripts/fetch-zero-sidecar.sh
-fi
-"
-
 echo "[build-appimage] building inside the '$CONTAINER' container..."
-distrobox enter "$CONTAINER" -- bash -c "
-set -euo pipefail
-cd '$PROJECT_DIR'
-export CARGO_TARGET_DIR='$PROJECT_DIR/src-tauri/target-container'
-export APPIMAGELAUNCHER_DISABLE=1
-export NO_STRIP=1
-npx tauri build
-"
-
-echo "[build-appimage] done: src-tauri/target-container/release/bundle/appimage/"
+distrobox enter "$CONTAINER" -- env \
+    ${TAURI_SIGNING_PRIVATE_KEY:+TAURI_SIGNING_PRIVATE_KEY="$TAURI_SIGNING_PRIVATE_KEY"} \
+    ${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:+TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"} \
+    bash -c "cd '$PROJECT_DIR' && ./scripts/build-appimage-in-container.sh"

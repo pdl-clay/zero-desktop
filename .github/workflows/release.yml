@@ -1,0 +1,107 @@
+name: Release
+
+# Builds, signs, and publishes the Linux AppImage release, including the
+# Tauri updater's latest.json manifest. See docs/en/architecture/decisions/
+# 005-tauri-updater-for-appimage-self-update.md.
+#
+# The job runs INSIDE a Fedora 43 container (not on the runner's bare
+# ubuntu-latest image) to exactly reproduce the only build environment
+# validated to not hit the AppImage runtime bug documented in
+# scripts/build-appimage-in-container.sh's header / AGENTS.md rule 7.
+#
+# amd64/x86_64 only for now - arm64 is an explicit follow-up, not a silent
+# omission (see the ADR above).
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build and release (e.g. v0.1.0-alpha.2)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-appimage:
+    runs-on: ubuntu-latest
+    container:
+      image: quay.io/fedora/fedora:43
+    steps:
+      - name: Install base tooling
+        run: dnf install -y git curl tar findutils which nodejs
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+
+      - name: Verify tag matches tauri.conf.json version
+        id: version
+        run: |
+          TAG="${{ inputs.tag || github.ref_name }}"
+          CONF_VERSION="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          if [[ "${TAG#v}" != "$CONF_VERSION" ]]; then
+            echo "::error::Tag $TAG does not match tauri.conf.json version $CONF_VERSION"
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$CONF_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Fetch the zero CLI sidecar
+        run: ./scripts/fetch-zero-sidecar.sh
+
+      - name: Build signed AppImage
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: ./scripts/build-appimage-in-container.sh
+
+      - name: Locate build artifacts and checksum
+        id: artifacts
+        run: |
+          BUNDLE_DIR="src-tauri/target-container/release/bundle/appimage"
+          APPIMAGE="$(find "$BUNDLE_DIR" -maxdepth 1 -name '*.AppImage' | head -n1)"
+          if [[ -z "$APPIMAGE" || ! -f "$APPIMAGE" ]]; then
+            echo "::error::AppImage not found in $BUNDLE_DIR"
+            exit 1
+          fi
+          if [[ ! -f "$APPIMAGE.sig" ]]; then
+            echo "::error::$APPIMAGE.sig missing - check TAURI_SIGNING_PRIVATE_KEY secrets"
+            exit 1
+          fi
+          ASSET_NAME="$(basename "$APPIMAGE")"
+          (cd "$BUNDLE_DIR" && sha256sum "$ASSET_NAME") > "$APPIMAGE.sha256"
+          echo "appimage=$APPIMAGE" >> "$GITHUB_OUTPUT"
+          echo "sig=$APPIMAGE.sig" >> "$GITHUB_OUTPUT"
+          echo "sha256=$APPIMAGE.sha256" >> "$GITHUB_OUTPUT"
+          echo "asset_name=$ASSET_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Generate latest.json
+        run: |
+          ./scripts/generate-update-manifest.sh \
+            --version "${{ steps.version.outputs.version }}" \
+            --tag "${{ steps.version.outputs.tag }}" \
+            --sig-file "${{ steps.artifacts.outputs.sig }}" \
+            --asset-name "${{ steps.artifacts.outputs.asset_name }}" \
+            --out latest.json
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          generate_release_notes: true
+          files: |
+            ${{ steps.artifacts.outputs.appimage }}
+            ${{ steps.artifacts.outputs.sig }}
+            ${{ steps.artifacts.outputs.sha256 }}
+            latest.json

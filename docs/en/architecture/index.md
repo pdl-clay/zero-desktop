@@ -14,6 +14,7 @@ This section collects high-level design decisions and architecture for **zero-de
 2. [Linux Distribution via AppImage + Install Script](./decisions/002-linux-appimage-plus-install-script.md)
 3. [Migrate the Connection Backbone from `zero exec` to `zero acp`](./decisions/003-migrate-to-acp.md)
 4. [Multi-Session Parallel Chat (Tiling)](./decisions/004-multi-session-parallel.md)
+5. [Tauri Updater for AppImage Self-Update](./decisions/005-tauri-updater-for-appimage-self-update.md)
 
 ## Distribution
 

@@ -13,3 +13,9 @@ AGENTS.md
 tests/install-test/zero-desktop_*.AppImage
 tests/install-test/zero-desktop_*.AppImage.sha256
 tests/install-test/scripts/install.sh
+
+# Updater signing keys - never commit, see ADR 005 (docs/en/architecture/
+# decisions/005-tauri-updater-for-appimage-self-update.md). Only the .pub
+# half should ever be pasted into tauri.conf.json.
+*.key
+*.key.pub

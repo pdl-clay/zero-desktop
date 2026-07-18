@@ -14,6 +14,7 @@ Esta seção reúne as decisões e o design de alto nível do **zero-desktop**.
 2. [Distribuição no Linux via AppImage + Script de Instalação](./decisions/002-linux-appimage-plus-install-script.md)
 3. [Migrar o Backbone de Conexão de `zero exec` para `zero acp`](./decisions/003-migrate-to-acp.md)
 4. [Sessões de Chat Paralelas (Tiling)](./decisions/004-multi-session-parallel.md)
+5. [Tauri Updater para Auto-Atualização do AppImage](./decisions/005-tauri-updater-for-appimage-self-update.md)
 
 ## Distribuição
 

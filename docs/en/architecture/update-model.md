@@ -13,22 +13,31 @@ This document defines how **zero-desktop** manages its own updates without inter
 
 ## 2. zero-desktop Updates
 
-During the Linux alpha, zero-desktop is distributed as an **AppImage** and updated by re-running the install script:
+zero-desktop is distributed as an **AppImage** and updates itself in-app using the **official Tauri updater** (`tauri-plugin-updater` + `tauri-plugin-process`). The first install still goes through the install script:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/pdl-clay/zero-desktop/main/scripts/install.sh | bash
 ```
 
-See [`docs/en/distribution/linux-installation.md`](../distribution/linux-installation.md) for details.
+See [`docs/en/distribution/linux-installation.md`](../distribution/linux-installation.md) for details. Full rationale for the choices below: [ADR 005](./decisions/005-tauri-updater-for-appimage-self-update.md).
 
-In the future, zero-desktop may adopt the **official Tauri updater** for in-app updates:
+### 2.1 Flow
 
-- JSON endpoint with release metadata.
-- Signature verification (public key embedded in the app).
-- Silent download and installation when a new version is available.
-- UI notification when an update is ready.
+- **Endpoint**: `https://github.com/pdl-clay/zero-desktop/releases/latest/download/latest.json` — a static file published alongside every GitHub Release (see `.github/workflows/release.yml`). GitHub's "latest" alias always resolves it to the newest release, so no template variables are needed.
+- **Check**: on every startup, and on demand via Settings → General → About → "Check for updates".
+- **Download + install**: silent, in the background, as soon as a newer version is found — no user confirmation needed to fetch the update.
+- **Restart**: never automatic. Once the update is installed, a dismissible notification offers a "Restart now" button; the app keeps running the old version until the user explicitly clicks it.
 
-Configuration details (endpoint URL, public key) will be defined later, before the first stable release.
+### 2.2 AppImage-only activation
+
+Self-update only makes sense when the app is actually running as the packaged AppImage — the install step overwrites the file at the `$APPIMAGE` env var, which only exists in that case. This is gated in two places:
+
+- **Rust**: `tauri-plugin-updater` is only registered in `src-tauri/src/lib.rs`'s `setup()` when `$APPIMAGE` is present.
+- **Frontend**: an `is_appimage` command lets the UI hide "Check for updates" entirely outside a real AppImage run (e.g. `tauri dev`).
+
+### 2.3 Signing
+
+Updates are signed with an Ed25519/minisign keypair generated via `tauri signer generate`. The public key is committed in `src-tauri/tauri.conf.json` (`plugins.updater.pubkey`); the private key and its password live only in GitHub Actions secrets (`TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`) and the maintainer's password manager — never in the repository.
 
 ## 3. zero CLI Detection and Installation
 

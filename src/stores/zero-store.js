@@ -15,6 +15,13 @@ import {
   getAdvisorConfig,
   setAdvisorConfig,
 } from "@/services/zero";
+import {
+  getAppVersion,
+  isAppImageRuntime,
+  checkForUpdate,
+  downloadAndInstallUpdate as downloadAndInstallUpdateSvc,
+  restartToApplyUpdate as restartToApplyUpdateSvc,
+} from "@/services/updater";
 
 export const useZeroStore = defineStore("zero", {
   state: () => ({
@@ -44,6 +51,18 @@ export const useZeroStore = defineStore("zero", {
     // a reload. See zero-session-store.js's toggleAdvisor.
     defaultAdvisorConfig: { enabled: false, model: null, mode: "max" },
     _advisorDefaultLoaded: false,
+    // zero-desktop's own auto-update state (distinct from zeroVersion above,
+    // which is the zero CLI's version) - see docs/en/architecture/decisions/
+    // 005-tauri-updater-for-appimage-self-update.md.
+    appVersion: null,
+    isAppImageRuntime: false,
+    updateAvailable: false,
+    updateInfo: null, // { version, notes, date }
+    isCheckingUpdate: false,
+    isDownloadingUpdate: false,
+    downloadProgress: { downloaded: 0, total: 0 },
+    updateReadyToInstall: false,
+    updateError: null,
   }),
 
   getters: {
@@ -268,6 +287,48 @@ export const useZeroStore = defineStore("zero", {
           provider._checking = false;
         }
       }
+    },
+
+    async loadAppInfo() {
+      this.appVersion = await getAppVersion();
+      this.isAppImageRuntime = await isAppImageRuntime();
+    },
+
+    async checkForUpdates({ silent = false } = {}) {
+      if (!this.isAppImageRuntime || this.isCheckingUpdate) return;
+      this.isCheckingUpdate = true;
+      this.updateError = null;
+      try {
+        const info = await checkForUpdate();
+        this.updateAvailable = Boolean(info);
+        this.updateInfo = info;
+      } catch (error) {
+        this.updateError = error;
+        if (!silent) throw error;
+      } finally {
+        this.isCheckingUpdate = false;
+      }
+    },
+
+    async downloadAndInstallUpdate() {
+      if (!this.updateAvailable || this.isDownloadingUpdate) return;
+      this.isDownloadingUpdate = true;
+      this.downloadProgress = { downloaded: 0, total: 0 };
+      try {
+        await downloadAndInstallUpdateSvc((progress) => {
+          this.downloadProgress = progress;
+        });
+        this.updateReadyToInstall = true;
+      } catch (error) {
+        this.updateError = error;
+        throw error;
+      } finally {
+        this.isDownloadingUpdate = false;
+      }
+    },
+
+    async restartToApplyUpdate() {
+      await restartToApplyUpdateSvc();
     },
   },
 });

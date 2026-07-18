@@ -943,6 +943,11 @@ async fn check_zero_provider(name: String, connectivity: bool) -> Result<provide
     providers::check(&name, connectivity).await
 }
 
+#[tauri::command]
+fn is_appimage() -> bool {
+    std::env::var_os("APPIMAGE").is_some()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -955,6 +960,15 @@ pub fn run() {
                 )?;
             }
 
+            // Self-update only makes sense for a real AppImage run: the install
+            // step overwrites the file at $APPIMAGE, which only exists when the
+            // app is actually running as the packaged AppImage (not `tauri dev`,
+            // not a bare `cargo run` binary). See docs/en/architecture/decisions/
+            // 005-tauri-updater-for-appimage-self-update.md.
+            if std::env::var_os("APPIMAGE").is_some() {
+                app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+            }
+
             let bridge = Arc::new(ZeroBridge::new(app.handle().clone()));
             app.manage(bridge);
 
@@ -964,7 +978,9 @@ pub fn run() {
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_process::init())
         .invoke_handler(tauri::generate_handler![
+            is_appimage,
             locate_zero_cli,
             start_zero_session,
             send_zero_message,

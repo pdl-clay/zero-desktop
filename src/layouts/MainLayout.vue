@@ -418,7 +418,36 @@ onMounted(async () => {
   if (workspacesStore.activePath) {
     await workspacesStore.loadSessions(workspacesStore.activePath);
   }
+  checkForUpdatesInBackground();
 });
+
+// Silent startup update check: never blocks first paint, never restarts the
+// app without explicit user confirmation - only surfaces a dismissible
+// notification once a new version has already been downloaded and installed.
+// See docs/en/architecture/decisions/005-tauri-updater-for-appimage-self-update.md.
+async function checkForUpdatesInBackground() {
+  await zeroStore.loadAppInfo();
+  if (!zeroStore.isAppImageRuntime) return;
+  try {
+    await zeroStore.checkForUpdates({ silent: true });
+    if (!zeroStore.updateAvailable) return;
+    await zeroStore.downloadAndInstallUpdate();
+    $q.notify({
+      type: "positive",
+      message: t("settings.updateReadyMessage", { version: zeroStore.updateInfo.version }),
+      timeout: 0,
+      actions: [
+        {
+          label: t("settings.restartNow"),
+          color: "white",
+          handler: () => zeroStore.restartToApplyUpdate(),
+        },
+      ],
+    });
+  } catch {
+    // Silent by design - the user can retry manually from Settings.
+  }
+}
 
 function toggleTheme() {
   $q.dark.toggle();

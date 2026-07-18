@@ -92,16 +92,45 @@
         <q-icon name="refresh" size="14px" />
         {{ $t("settings.recheck") }}
       </button>
+
+      <div class="settings-general__about-row">
+        <span class="settings-general__about-label">{{ $t("settings.appVersionLabel") }}</span>
+        <span class="settings-general__about-value">{{ zeroStore.appVersion || "—" }}</span>
+      </div>
+      <template v-if="zeroStore.isAppImageRuntime">
+        <button
+          type="button"
+          class="settings-pill settings-general__recheck-btn"
+          :disabled="zeroStore.isCheckingUpdate || zeroStore.isDownloadingUpdate"
+          @click="onCheckForUpdates"
+        >
+          <q-icon name="cloud_sync" size="14px" />
+          {{ $t("settings.checkForUpdates") }}
+        </button>
+        <div class="settings-general__update-status" v-if="updateStatusText">
+          {{ updateStatusText }}
+        </div>
+        <button
+          v-if="zeroStore.updateReadyToInstall"
+          type="button"
+          class="settings-pill settings-general__recheck-btn"
+          @click="zeroStore.restartToApplyUpdate()"
+        >
+          {{ $t("settings.restartNow") }}
+        </button>
+      </template>
     </section>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from "vue";
+import { ref, computed, onMounted } from "vue";
+import { useI18n } from "vue-i18n";
 import { i18n, LOCALE_STORAGE_KEY } from "@/i18n/instance";
 import { useZeroStore } from "@/stores/zero-store";
 import ModelPickerDropdown from "@/components/chat/ModelPickerDropdown.vue";
 
+const { t } = useI18n();
 const zeroStore = useZeroStore();
 
 const currentLocale = ref(i18n.global.locale.value);
@@ -120,6 +149,7 @@ const advisorConfig = ref({ enabled: false, model: null, mode: "max" });
 
 onMounted(async () => {
   advisorConfig.value = await zeroStore.loadDefaultAdvisorConfig({ force: true });
+  await zeroStore.loadAppInfo();
 });
 
 async function saveAdvisorConfig() {
@@ -130,6 +160,28 @@ function setAdvisorMode(mode) {
   advisorConfig.value.mode = mode;
   saveAdvisorConfig();
 }
+
+const hasCheckedForUpdates = ref(false);
+
+async function onCheckForUpdates() {
+  await zeroStore.checkForUpdates({ silent: true });
+  hasCheckedForUpdates.value = true;
+  if (zeroStore.updateAvailable) {
+    await zeroStore.downloadAndInstallUpdate();
+  }
+}
+
+const updateStatusText = computed(() => {
+  if (zeroStore.updateError) return t("settings.updateCheckFailed");
+  if (zeroStore.updateReadyToInstall) return t("settings.updateReadyToRestart");
+  if (zeroStore.isDownloadingUpdate) return t("settings.updateDownloading");
+  if (zeroStore.isCheckingUpdate) return t("settings.checkingForUpdates");
+  if (zeroStore.updateAvailable && zeroStore.updateInfo) {
+    return t("settings.updateAvailable", { version: zeroStore.updateInfo.version });
+  }
+  if (hasCheckedForUpdates.value) return t("settings.updateUpToDate");
+  return "";
+});
 </script>
 
 <style scoped>
@@ -222,5 +274,11 @@ function setAdvisorMode(mode) {
 
 .settings-general__recheck-btn {
   margin-top: 10px;
+}
+
+.settings-general__update-status {
+  margin-top: 8px;
+  font-size: 0.82em;
+  color: var(--chat-text-muted);
 }
 </style>
