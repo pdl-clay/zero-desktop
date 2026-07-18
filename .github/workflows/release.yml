@@ -31,7 +31,16 @@ jobs:
       image: quay.io/fedora/fedora:43
     steps:
       - name: Install base tooling
-        run: dnf install -y git curl tar findutils which nodejs
+        run: |
+          dnf install -y git curl tar findutils which nodejs
+          # Fedora's nodejs stream can bundle an npm old enough to hit a
+          # known `npm ci` bug: it wrongly demands optional peer
+          # dependencies (e.g. vite's optional `esbuild` peer) be present
+          # in the lockfile even though they were never actually installed.
+          # Upgrading npm itself (not node) sidesteps it.
+          npm install -g npm@latest
+          node --version
+          npm --version
 
       - uses: actions/checkout@v4
         with:
