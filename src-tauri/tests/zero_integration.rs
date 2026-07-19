@@ -32,9 +32,14 @@ fn temp_workspace() -> std::path::PathBuf {
 
 fn zero_data_dir() -> std::path::PathBuf {
     if let Ok(home) = std::env::var("HOME") {
-        return std::path::PathBuf::from(home).join(".local").join("share").join("zero");
+        return std::path::PathBuf::from(home)
+            .join(".local")
+            .join("share")
+            .join("zero");
     }
-    dirs_next().unwrap_or_else(|| std::path::PathBuf::from(".")).join("zero")
+    dirs_next()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("zero")
 }
 
 fn dirs_next() -> Option<std::path::PathBuf> {
@@ -59,9 +64,14 @@ fn session_dir(session_id: &str) -> std::path::PathBuf {
     zero_data_dir().join("sessions").join(session_id)
 }
 
-fn spawn_zero(cwd: &std::path::Path)
-    -> (tokio::process::Child, tokio::process::ChildStdin, tokio::process::ChildStdout, tokio::process::ChildStderr)
-{
+fn spawn_zero(
+    cwd: &std::path::Path,
+) -> (
+    tokio::process::Child,
+    tokio::process::ChildStdin,
+    tokio::process::ChildStdout,
+    tokio::process::ChildStderr,
+) {
     let zero_path = locator::locate_zero()
         .expect("zero CLI must be installed to run integration tests")
         .path;
@@ -87,9 +97,15 @@ fn spawn_zero(cwd: &std::path::Path)
     (child, stdin, stdout, stderr)
 }
 
-fn spawn_zero_resume(cwd: &std::path::Path, session_id: &str)
-    -> (tokio::process::Child, tokio::process::ChildStdin, tokio::process::ChildStdout, tokio::process::ChildStderr)
-{
+fn spawn_zero_resume(
+    cwd: &std::path::Path,
+    session_id: &str,
+) -> (
+    tokio::process::Child,
+    tokio::process::ChildStdin,
+    tokio::process::ChildStdout,
+    tokio::process::ChildStderr,
+) {
     let zero_path = locator::locate_zero()
         .expect("zero CLI must be installed to run integration tests")
         .path;
@@ -127,7 +143,10 @@ async fn send_and_receive(
     let mut writer = tokio::io::BufWriter::new(stdin);
 
     let line = user_message_line(content);
-    writer.write_all(line.as_bytes()).await.map_err(|e| e.to_string())?;
+    writer
+        .write_all(line.as_bytes())
+        .await
+        .map_err(|e| e.to_string())?;
     writer.write_all(b"\n").await.map_err(|e| e.to_string())?;
     writer.flush().await.map_err(|e| e.to_string())?;
     drop(writer);
@@ -141,8 +160,8 @@ async fn send_and_receive(
 
         let line = line.ok_or_else(|| "stdout stream ended unexpectedly".to_string())?;
 
-        let event: OutputEvent = serde_json::from_str(&line)
-            .map_err(|e| format!("parse error: {e} in line: {line}"))?;
+        let event: OutputEvent =
+            serde_json::from_str(&line).map_err(|e| format!("parse error: {e} in line: {line}"))?;
 
         let is_run_end = event.event_type == "run_end";
         events.push(event);
@@ -168,7 +187,11 @@ async fn test_locator_finds_zero() {
     let location = locator::locate_zero().expect("zero CLI must be found");
     assert!(location.path.is_file(), "zero path must be a file");
     assert!(
-        location.version.as_ref().map(|v| !v.is_empty()).unwrap_or(false),
+        location
+            .version
+            .as_ref()
+            .map(|v| !v.is_empty())
+            .unwrap_or(false),
         "version must be present"
     );
 }
@@ -178,10 +201,23 @@ async fn test_session_emits_run_start() {
     let workspace = temp_workspace();
     let (mut child, stdin, stdout, _stderr) = spawn_zero(&workspace);
 
-    let events = send_and_receive(stdin, stdout, "Respond with: OK", TURN_TIMEOUT).await.unwrap();
+    let events = send_and_receive(stdin, stdout, "Respond with: OK", TURN_TIMEOUT)
+        .await
+        .unwrap();
 
-    assert!(has_type(&events, "run_start"), "must have run_start. types: {:?}", event_types(&events));
-    assert_eq!(events.iter().find(|e| e.event_type == "run_start").unwrap().schema_version, 2);
+    assert!(
+        has_type(&events, "run_start"),
+        "must have run_start. types: {:?}",
+        event_types(&events)
+    );
+    assert_eq!(
+        events
+            .iter()
+            .find(|e| e.event_type == "run_start")
+            .unwrap()
+            .schema_version,
+        2
+    );
 
     child.kill().await.ok();
     let _ = child.wait().await;
@@ -192,13 +228,31 @@ async fn test_complete_response_flow() {
     let workspace = temp_workspace();
     let (mut child, stdin, stdout, _stderr) = spawn_zero(&workspace);
 
-    let events = send_and_receive(stdin, stdout, "Respond with exactly: OK", TURN_TIMEOUT).await.unwrap();
+    let events = send_and_receive(stdin, stdout, "Respond with exactly: OK", TURN_TIMEOUT)
+        .await
+        .unwrap();
 
     let types = event_types(&events);
-    assert!(types.contains(&"run_start"), "must have run_start. types: {:?}", types);
-    assert!(types.contains(&"text"), "must have text streaming. types: {:?}", types);
-    assert!(types.contains(&"final"), "must have final. types: {:?}", types);
-    assert!(types.contains(&"run_end"), "must have run_end. types: {:?}", types);
+    assert!(
+        types.contains(&"run_start"),
+        "must have run_start. types: {:?}",
+        types
+    );
+    assert!(
+        types.contains(&"text"),
+        "must have text streaming. types: {:?}",
+        types
+    );
+    assert!(
+        types.contains(&"final"),
+        "must have final. types: {:?}",
+        types
+    );
+    assert!(
+        types.contains(&"run_end"),
+        "must have run_end. types: {:?}",
+        types
+    );
 
     child.kill().await.ok();
     let _ = child.wait().await;
@@ -209,12 +263,22 @@ async fn test_response_contains_expected_text() {
     let workspace = temp_workspace();
     let (mut child, stdin, stdout, _stderr) = spawn_zero(&workspace);
 
-    let events = send_and_receive(stdin, stdout, "Respond with exactly: HELLO_WORLD", TURN_TIMEOUT).await.unwrap();
+    let events = send_and_receive(
+        stdin,
+        stdout,
+        "Respond with exactly: HELLO_WORLD",
+        TURN_TIMEOUT,
+    )
+    .await
+    .unwrap();
 
-    let final_event = events.iter().find(|e| e.event_type == "final")
+    let final_event = events
+        .iter()
+        .find(|e| e.event_type == "final")
         .unwrap_or_else(|| panic!("no final event. types: {:?}", event_types(&events)));
 
-    let text = final_event.payload["text"].as_str()
+    let text = final_event.payload["text"]
+        .as_str()
         .unwrap_or_else(|| panic!("no 'text' in final payload: {:?}", final_event.payload));
 
     assert!(
@@ -231,12 +295,19 @@ async fn test_run_start_metadata() {
     let workspace = temp_workspace();
     let (mut child, stdin, stdout, _stderr) = spawn_zero(&workspace);
 
-    let events = send_and_receive(stdin, stdout, "Respond with: OK", TURN_TIMEOUT).await.unwrap();
+    let events = send_and_receive(stdin, stdout, "Respond with: OK", TURN_TIMEOUT)
+        .await
+        .unwrap();
 
-    let run_start = events.iter().find(|e| e.event_type == "run_start")
+    let run_start = events
+        .iter()
+        .find(|e| e.event_type == "run_start")
         .expect("must have run_start event");
 
-    assert!(run_start.payload["sessionId"].is_string(), "must have sessionId");
+    assert!(
+        run_start.payload["sessionId"].is_string(),
+        "must have sessionId"
+    );
     assert!(run_start.payload["cwd"].is_string(), "must have cwd");
     assert!(run_start.payload["model"].is_string(), "must have model");
 
@@ -249,13 +320,23 @@ async fn test_run_end_success_status() {
     let workspace = temp_workspace();
     let (mut child, stdin, stdout, _stderr) = spawn_zero(&workspace);
 
-    let events = send_and_receive(stdin, stdout, "Respond with: SUCCESS", TURN_TIMEOUT).await.unwrap();
+    let events = send_and_receive(stdin, stdout, "Respond with: SUCCESS", TURN_TIMEOUT)
+        .await
+        .unwrap();
 
-    let run_end = events.iter().find(|e| e.event_type == "run_end")
+    let run_end = events
+        .iter()
+        .find(|e| e.event_type == "run_end")
         .expect("must have run_end event");
 
-    assert_eq!(run_end.payload["status"], "success", "run_end status should be success");
-    assert_eq!(run_end.payload["exitCode"], 0, "run_end exitCode should be 0");
+    assert_eq!(
+        run_end.payload["status"], "success",
+        "run_end status should be success"
+    );
+    assert_eq!(
+        run_end.payload["exitCode"], 0,
+        "run_end exitCode should be 0"
+    );
 
     child.kill().await.ok();
     let _ = child.wait().await;
@@ -266,13 +347,19 @@ async fn test_json_serialization_roundtrip_all_events() {
     let workspace = temp_workspace();
     let (mut child, stdin, stdout, _stderr) = spawn_zero(&workspace);
 
-    let events = send_and_receive(stdin, stdout, "Respond with: TEST", TURN_TIMEOUT).await.unwrap();
+    let events = send_and_receive(stdin, stdout, "Respond with: TEST", TURN_TIMEOUT)
+        .await
+        .unwrap();
 
     for event in &events {
         let serialized = serde_json::to_string(event)
             .unwrap_or_else(|e| panic!("failed to serialize {:?}: {e}", event.event_type));
-        let deserialized: OutputEvent = serde_json::from_str(&serialized)
-            .unwrap_or_else(|e| panic!("roundtrip failed for '{}': {e}\n{serialized}", event.event_type));
+        let deserialized: OutputEvent = serde_json::from_str(&serialized).unwrap_or_else(|e| {
+            panic!(
+                "roundtrip failed for '{}': {e}\n{serialized}",
+                event.event_type
+            )
+        });
 
         assert_eq!(deserialized.event_type, event.event_type);
         assert_eq!(deserialized.schema_version, event.schema_version);
@@ -290,24 +377,30 @@ async fn test_stderr_no_errors() {
     let mut stderr_lines = BufReader::new(stderr).lines();
     let stderr_task = tokio::spawn(async move {
         let mut collected = Vec::new();
-        while let Ok(Some(line)) =
-            timeout(Duration::from_secs(5), stderr_lines.next_line()).await.unwrap_or(Ok(None))
+        while let Ok(Some(line)) = timeout(Duration::from_secs(5), stderr_lines.next_line())
+            .await
+            .unwrap_or(Ok(None))
         {
             collected.push(line);
         }
         collected
     });
 
-    let events = send_and_receive(stdin, stdout, "Respond with: OK", TURN_TIMEOUT).await.unwrap();
+    let events = send_and_receive(stdin, stdout, "Respond with: OK", TURN_TIMEOUT)
+        .await
+        .unwrap();
     assert!(has_type(&events, "run_end"));
 
     child.kill().await.ok();
     let _ = child.wait().await;
 
     let stderr_output = timeout(Duration::from_secs(5), stderr_task)
-        .await.expect("stderr task timed out").expect("stderr task panicked");
+        .await
+        .expect("stderr task timed out")
+        .expect("stderr task panicked");
 
-    let error_lines: Vec<_> = stderr_output.iter()
+    let error_lines: Vec<_> = stderr_output
+        .iter()
         .filter(|l| l.to_lowercase().contains("error"))
         .collect();
     if !error_lines.is_empty() {
@@ -322,13 +415,23 @@ async fn test_multiple_turns_new_sessions() {
     for msg in &["Respond with: OK", "Respond with: YES"] {
         let (mut child, stdin, stdout, _stderr) = spawn_zero(&workspace);
 
-        let events = send_and_receive(stdin, stdout, msg, TURN_TIMEOUT).await.unwrap();
+        let events = send_and_receive(stdin, stdout, msg, TURN_TIMEOUT)
+            .await
+            .unwrap();
 
         let has_text = has_type(&events, "text") || has_type(&events, "final");
-        assert!(has_text, "must get response for '{msg}'. types: {:?}", event_types(&events));
+        assert!(
+            has_text,
+            "must get response for '{msg}'. types: {:?}",
+            event_types(&events)
+        );
 
         let has_error = has_type(&events, "error");
-        assert!(!has_error, "must not have error for '{msg}'. types: {:?}", event_types(&events));
+        assert!(
+            !has_error,
+            "must not have error for '{msg}'. types: {:?}",
+            event_types(&events)
+        );
 
         child.kill().await.ok();
         let _ = child.wait().await;
@@ -349,19 +452,40 @@ async fn test_input_event_serialization() {
 #[tokio::test]
 async fn test_output_event_deserialization_all_types() {
     let test_cases = vec![
-        (r#"{"schemaVersion":2,"type":"run_start","sessionId":"abc"}"#, "run_start"),
-        (r#"{"schemaVersion":2,"type":"text","delta":"hello"}"#, "text"),
-        (r#"{"schemaVersion":2,"type":"final","text":"done"}"#, "final"),
-        (r#"{"schemaVersion":2,"type":"run_end","status":"success"}"#, "run_end"),
-        (r#"{"schemaVersion":2,"type":"error","message":"oops"}"#, "error"),
-        (r#"{"schemaVersion":2,"type":"usage","totalTokens":100}"#, "usage"),
+        (
+            r#"{"schemaVersion":2,"type":"run_start","sessionId":"abc"}"#,
+            "run_start",
+        ),
+        (
+            r#"{"schemaVersion":2,"type":"text","delta":"hello"}"#,
+            "text",
+        ),
+        (
+            r#"{"schemaVersion":2,"type":"final","text":"done"}"#,
+            "final",
+        ),
+        (
+            r#"{"schemaVersion":2,"type":"run_end","status":"success"}"#,
+            "run_end",
+        ),
+        (
+            r#"{"schemaVersion":2,"type":"error","message":"oops"}"#,
+            "error",
+        ),
+        (
+            r#"{"schemaVersion":2,"type":"usage","totalTokens":100}"#,
+            "usage",
+        ),
     ];
 
     for (json, expected_type) in &test_cases {
         let event: OutputEvent = serde_json::from_str(json)
             .unwrap_or_else(|e| panic!("failed to parse {}: {e}", expected_type));
-        assert_eq!(event.event_type, *expected_type,
-            "expected '{}' got '{}'", expected_type, event.event_type);
+        assert_eq!(
+            event.event_type, *expected_type,
+            "expected '{}' got '{}'",
+            expected_type, event.event_type
+        );
     }
 }
 
@@ -378,7 +502,9 @@ async fn test_no_sessions_cleans_up() {
     let workspace = temp_workspace();
     let (mut child, stdin, stdout, _stderr) = spawn_zero(&workspace);
 
-    let events = send_and_receive(stdin, stdout, "Respond with: QUICK", TURN_TIMEOUT).await.unwrap();
+    let events = send_and_receive(stdin, stdout, "Respond with: QUICK", TURN_TIMEOUT)
+        .await
+        .unwrap();
     assert!(has_type(&events, "run_end"));
 
     child.kill().await.ok();
@@ -400,7 +526,11 @@ async fn test_multi_turn_context_preserved_with_resume() {
     )
     .await
     .unwrap();
-    assert!(has_type(&events1, "run_end"), "turn 1 must complete. types: {:?}", event_types(&events1));
+    assert!(
+        has_type(&events1, "run_end"),
+        "turn 1 must complete. types: {:?}",
+        event_types(&events1)
+    );
 
     let session_id = events1
         .iter()
@@ -423,7 +553,11 @@ async fn test_multi_turn_context_preserved_with_resume() {
     )
     .await
     .unwrap();
-    assert!(has_type(&events2, "run_end"), "turn 2 must complete. types: {:?}", event_types(&events2));
+    assert!(
+        has_type(&events2, "run_end"),
+        "turn 2 must complete. types: {:?}",
+        event_types(&events2)
+    );
 
     let final_event = events2
         .iter()
@@ -448,7 +582,9 @@ async fn test_sessions_list_filters_by_cwd() {
 
     // Send a message to create a session in this workspace
     let (mut child, stdin, stdout, _stderr) = spawn_zero(&workspace);
-    let events = send_and_receive(stdin, stdout, "Respond with: OK", TURN_TIMEOUT).await.unwrap();
+    let events = send_and_receive(stdin, stdout, "Respond with: OK", TURN_TIMEOUT)
+        .await
+        .unwrap();
 
     let session_id = events
         .iter()
@@ -502,7 +638,9 @@ async fn test_session_info_fields() {
     let workspace = temp_workspace();
 
     let (mut child, stdin, stdout, _stderr) = spawn_zero(&workspace);
-    let _events = send_and_receive(stdin, stdout, "Respond with: OK", TURN_TIMEOUT).await.unwrap();
+    let _events = send_and_receive(stdin, stdout, "Respond with: OK", TURN_TIMEOUT)
+        .await
+        .unwrap();
     child.kill().await.ok();
     let _ = child.wait().await;
 
@@ -534,7 +672,9 @@ async fn test_delete_session_removes_from_list() {
     let workspace = temp_workspace();
 
     let (mut child, stdin, stdout, _stderr) = spawn_zero(&workspace);
-    let events = send_and_receive(stdin, stdout, "Respond with: DELETE_TEST", TURN_TIMEOUT).await.unwrap();
+    let events = send_and_receive(stdin, stdout, "Respond with: DELETE_TEST", TURN_TIMEOUT)
+        .await
+        .unwrap();
     child.kill().await.ok();
     let _ = child.wait().await;
 
@@ -583,7 +723,10 @@ async fn test_delete_session_removes_from_list() {
         s["sessionId"].as_str().unwrap_or("") == session_id
             && s["cwd"].as_str().unwrap_or("") == cwd_str
     });
-    assert!(!found_after, "session must NOT appear in list after deletion");
+    assert!(
+        !found_after,
+        "session must NOT appear in list after deletion"
+    );
 }
 
 #[tokio::test]
@@ -592,7 +735,9 @@ async fn test_message_history_recovery_from_events_jsonl() {
 
     let user_msg = "My name is Bob and I like Rust";
     let (mut child, stdin, stdout, _stderr) = spawn_zero(&workspace);
-    let events = send_and_receive(stdin, stdout, user_msg, TURN_TIMEOUT).await.unwrap();
+    let events = send_and_receive(stdin, stdout, user_msg, TURN_TIMEOUT)
+        .await
+        .unwrap();
     child.kill().await.ok();
     let _ = child.wait().await;
 
@@ -611,7 +756,10 @@ async fn test_message_history_recovery_from_events_jsonl() {
 
     let content = std::fs::read_to_string(&events_path).unwrap();
     let lines: Vec<&str> = content.lines().collect();
-    assert!(!lines.is_empty(), "events.jsonl must have at least one event");
+    assert!(
+        !lines.is_empty(),
+        "events.jsonl must have at least one event"
+    );
 
     // Parse all events
     let parsed: Vec<serde_json::Value> = lines
@@ -665,8 +813,17 @@ async fn test_message_history_recovery_from_events_jsonl() {
     // All message events must have required fields
     for msg in &messages {
         assert!(msg["id"].is_string(), "message event must have id");
-        assert!(msg["sessionId"].is_string(), "message event must have sessionId");
-        assert!(msg["createdAt"].is_string(), "message event must have createdAt");
-        assert!(msg["sequence"].is_number(), "message event must have sequence");
+        assert!(
+            msg["sessionId"].is_string(),
+            "message event must have sessionId"
+        );
+        assert!(
+            msg["createdAt"].is_string(),
+            "message event must have createdAt"
+        );
+        assert!(
+            msg["sequence"].is_number(),
+            "message event must have sequence"
+        );
     }
 }

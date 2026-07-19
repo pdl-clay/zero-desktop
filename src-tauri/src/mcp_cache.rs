@@ -34,7 +34,8 @@ pub fn cache_path() -> Result<PathBuf, String> {
     if let Some(overridden) = OVERRIDE_PATH.with(|p| p.borrow().clone()) {
         return Ok(overridden);
     }
-    let base = dirs::data_dir().ok_or_else(|| "Could not resolve app data directory".to_string())?;
+    let base =
+        dirs::data_dir().ok_or_else(|| "Could not resolve app data directory".to_string())?;
     Ok(base.join("zero-desktop").join("mcp-status-cache.json"))
 }
 
@@ -151,7 +152,12 @@ mod tests {
     fn test_save_and_load() {
         let (temp_dir, _cache_file) = set_test_path();
         set_status("brave-search", "ok", 3, None);
-        set_status("filesystem", "error", 0, Some("connection refused".to_string()));
+        set_status(
+            "filesystem",
+            "error",
+            0,
+            Some("connection refused".to_string()),
+        );
 
         let cache = load();
         assert_eq!(cache.servers.len(), 2);

@@ -34,7 +34,8 @@ pub struct AdvisorConfig {
 
 /// Caminho para o arquivo de configuração global do advisor.
 fn advisor_config_path() -> Result<PathBuf, String> {
-    let base = dirs::data_dir().ok_or_else(|| "Could not resolve app data directory".to_string())?;
+    let base =
+        dirs::data_dir().ok_or_else(|| "Could not resolve app data directory".to_string())?;
     Ok(base.join("zero-desktop").join("advisor-config.json"))
 }
 
@@ -205,7 +206,10 @@ pub fn extract_advisor_prompt(args: &serde_json::Value) -> Option<String> {
 
 /// Caminho do specialist `advisor` dentro de um workspace.
 fn specialist_path(workspace_root: &Path) -> PathBuf {
-    workspace_root.join(".zero").join("specialists").join("advisor.md")
+    workspace_root
+        .join(".zero")
+        .join("specialists")
+        .join("advisor.md")
 }
 
 /// Template do specialist `advisor`, usado para CRIAR
@@ -371,7 +375,8 @@ mod tests {
         // no "mode" key in its JSON - #[serde(default)] must resolve that to
         // Max, not Low, so a pre-existing user's advisor keeps behaving the
         // same way it did before this field was introduced.
-        let deserialized: AdvisorConfig = serde_json::from_str(r#"{"enabled":true,"model":null}"#).unwrap();
+        let deserialized: AdvisorConfig =
+            serde_json::from_str(r#"{"enabled":true,"model":null}"#).unwrap();
         assert_eq!(deserialized.mode, AdvisorMode::Max);
     }
 
@@ -434,7 +439,10 @@ mod tests {
             "prompt": "Analise este código"
         });
         assert!(is_advisor_consultation("Task", &args));
-        assert!(!is_advisor_consultation("Task", &serde_json::json!({"name": "explorer"})));
+        assert!(!is_advisor_consultation(
+            "Task",
+            &serde_json::json!({"name": "explorer"})
+        ));
         assert!(!is_advisor_consultation("read_file", &args));
     }
 
@@ -444,7 +452,10 @@ mod tests {
             "name": "advisor",
             "prompt": "Analise este código"
         });
-        assert_eq!(extract_advisor_prompt(&args), Some("Analise este código".to_string()));
+        assert_eq!(
+            extract_advisor_prompt(&args),
+            Some("Analise este código".to_string())
+        );
     }
 
     const SPECIALIST_NO_MODEL: &str = "---\nname: \"advisor\"\ndescription: \"desc\"\ntools:\n  - \"read-only\"\n---\n\nBody text.\n";
@@ -453,7 +464,10 @@ mod tests {
     fn test_set_frontmatter_model_inserts_when_absent() {
         let result = set_frontmatter_model(SPECIALIST_NO_MODEL, Some("claude-opus-4-1"));
         assert!(result.contains("model: \"claude-opus-4-1\""));
-        assert!(result.contains("name: \"advisor\""), "keeps other frontmatter fields");
+        assert!(
+            result.contains("name: \"advisor\""),
+            "keeps other frontmatter fields"
+        );
         assert!(result.contains("Body text."), "keeps the body untouched");
         // The inserted field must land inside the frontmatter block, before
         // the closing `---`, not after it (which would silently do nothing).
@@ -500,23 +514,36 @@ mod tests {
         // other workspace hit `specialist "advisor" not found` the moment
         // the executor tried to delegate, since .zero/ is gitignored and
         // nothing ever created the file.
-        let dir = std::env::temp_dir().join(format!("advisor-sync-create-test-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("advisor-sync-create-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join(".zero").join("specialists").join("advisor.md");
-        assert!(!path.is_file(), "test assumes the specialist file doesn't exist yet");
+        assert!(
+            !path.is_file(),
+            "test assumes the specialist file doesn't exist yet"
+        );
 
         sync_specialist_model(&dir, None).unwrap();
 
         let created = std::fs::read_to_string(&path).expect("advisor.md should have been created");
-        assert!(created.contains("name: \"advisor\""), "created file is a valid specialist manifest");
-        assert!(!created.contains("model:"), "no model field when model is None");
+        assert!(
+            created.contains("name: \"advisor\""),
+            "created file is a valid specialist manifest"
+        );
+        assert!(
+            !created.contains("model:"),
+            "no model field when model is None"
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn test_sync_specialist_model_creates_file_with_model_when_missing() {
-        let dir = std::env::temp_dir().join(format!("advisor-sync-create-model-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "advisor-sync-create-model-test-{}",
+            std::process::id()
+        ));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join(".zero").join("specialists").join("advisor.md");
 
@@ -531,7 +558,8 @@ mod tests {
 
     #[test]
     fn test_sync_specialist_model_writes_through_to_disk() {
-        let dir = std::env::temp_dir().join(format!("advisor-sync-write-test-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("advisor-sync-write-test-{}", std::process::id()));
         let specialist_dir = dir.join(".zero").join("specialists");
         std::fs::create_dir_all(&specialist_dir).unwrap();
         let path = specialist_dir.join("advisor.md");

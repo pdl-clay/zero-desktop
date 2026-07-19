@@ -144,20 +144,14 @@ mod tests {
         assert!(location.path.is_file(), "zero path must point to a file");
 
         if let Some(version) = &location.version {
-            assert!(
-                !version.is_empty(),
-                "version string must not be empty"
-            );
+            assert!(!version.is_empty(), "version string must not be empty");
         }
     }
 
     #[test]
     fn test_locate_zero_path_is_absolute() {
         let result = locate_zero().expect("zero CLI must be installed");
-        assert!(
-            result.path.is_absolute(),
-            "zero path must be absolute"
-        );
+        assert!(result.path.is_absolute(), "zero path must be absolute");
     }
 
     #[test]
@@ -220,7 +214,8 @@ mod tests {
         let result = locate_zero_with_sidecar(Some(sidecar.clone()));
         std::fs::remove_dir_all(&dir).ok();
 
-        let result = result.expect("locate_zero_with_sidecar should succeed with a sidecar present");
+        let result =
+            result.expect("locate_zero_with_sidecar should succeed with a sidecar present");
         assert_eq!(
             result.path, sidecar,
             "must prefer the bundled sidecar over PATH/cache when it exists"

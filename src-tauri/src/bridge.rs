@@ -1,8 +1,8 @@
+use base64::Engine;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use base64::Engine;
 use tauri::Emitter;
 use tokio::fs::OpenOptions;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -89,11 +89,17 @@ fn tool_name_from_call(tool_call_id: &str, title: Option<&str>) -> String {
         if !trimmed.is_empty() {
             // Titles often include the first argument (e.g. "edit_file note.txt");
             // keep only the first whitespace-delimited token as the tool name.
-            return trimmed.split_whitespace().next().unwrap_or(trimmed).to_string();
+            return trimmed
+                .split_whitespace()
+                .next()
+                .unwrap_or(trimmed)
+                .to_string();
         }
     }
     match tool_call_id.rsplit_once('_') {
-        Some((prefix, suffix)) if !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit()) => {
+        Some((prefix, suffix))
+            if !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit()) =>
+        {
             prefix.to_string()
         }
         _ => tool_call_id.to_string(),
@@ -189,11 +195,17 @@ fn translate_session_update(params: &serde_json::Value) -> Option<OutputEvent> {
     match kind {
         "agent_message_chunk" => {
             let text = update["content"]["text"].as_str().unwrap_or("");
-            Some(OutputEvent::new("text", serde_json::json!({ "delta": text })))
+            Some(OutputEvent::new(
+                "text",
+                serde_json::json!({ "delta": text }),
+            ))
         }
         "agent_thought_chunk" => {
             let text = update["content"]["text"].as_str().unwrap_or("");
-            Some(OutputEvent::new("reasoning", serde_json::json!({ "delta": text })))
+            Some(OutputEvent::new(
+                "reasoning",
+                serde_json::json!({ "delta": text }),
+            ))
         }
         "tool_call" => {
             let tool_call_id = update["toolCallId"].as_str().unwrap_or("");
@@ -223,8 +235,14 @@ fn translate_session_update(params: &serde_json::Value) -> Option<OutputEvent> {
             ))
         }
         "plan" => {
-            let entries = update.get("entries").cloned().unwrap_or(serde_json::json!([]));
-            Some(OutputEvent::new("plan_update", serde_json::json!({ "entries": entries })))
+            let entries = update
+                .get("entries")
+                .cloned()
+                .unwrap_or(serde_json::json!([]));
+            Some(OutputEvent::new(
+                "plan_update",
+                serde_json::json!({ "entries": entries }),
+            ))
         }
         "_zero/spec_review_required" => Some(OutputEvent::new(
             "spec_review_required",
@@ -243,17 +261,29 @@ fn translate_session_update(params: &serde_json::Value) -> Option<OutputEvent> {
 /// payload emitted on `zero:permission-request`. `correlation_id` is ours -
 /// generated so we can look the pending request back up when the frontend
 /// answers, independent of whatever id shape the JSON-RPC request used.
-fn translate_permission_request(correlation_id: &str, params: &serde_json::Value) -> serde_json::Value {
+fn translate_permission_request(
+    correlation_id: &str,
+    params: &serde_json::Value,
+) -> serde_json::Value {
     let tool_call = &params["toolCall"];
     let tool_call_id = tool_call["toolCallId"].as_str().unwrap_or("");
     let title = tool_call["title"].as_str();
     let fallback_name = tool_name_from_call(tool_call_id, title);
-    let tool_name = title.map(|t| {
-        let trimmed = t.trim();
-        trimmed.split_whitespace().next().unwrap_or(trimmed).to_string()
-    }).unwrap_or(fallback_name);
+    let tool_name = title
+        .map(|t| {
+            let trimmed = t.trim();
+            trimmed
+                .split_whitespace()
+                .next()
+                .unwrap_or(trimmed)
+                .to_string()
+        })
+        .unwrap_or(fallback_name);
     let reason = tool_call["rawInput"]["reason"].as_str().unwrap_or("");
-    let options = params.get("options").cloned().unwrap_or(serde_json::json!([]));
+    let options = params
+        .get("options")
+        .cloned()
+        .unwrap_or(serde_json::json!([]));
 
     serde_json::json!({
         "requestId": correlation_id,
@@ -292,7 +322,12 @@ async fn append_history(path: &Path, event_type: &str, payload: &serde_json::Val
         }
     }
 
-    match OpenOptions::new().create(true).append(true).open(path).await {
+    match OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .await
+    {
         Ok(mut file) => {
             if let Err(e) = file.write_all(line.as_bytes()).await {
                 log::error!("[bridge] failed to append history line: {e}");
@@ -310,7 +345,12 @@ async fn flush_pending_reasoning(path: &Path, pending: &mut String) {
     if pending.is_empty() {
         return;
     }
-    append_history(path, "reasoning", &serde_json::json!({ "content": pending })).await;
+    append_history(
+        path,
+        "reasoning",
+        &serde_json::json!({ "content": pending }),
+    )
+    .await;
     pending.clear();
 }
 
@@ -339,7 +379,8 @@ async fn flush_pending_message(path: &Path, role: &str, pending: &mut String) {
 /// contains (which, in ACP mode, only records `message` entries - verified
 /// live - not tool calls/reasoning/permission decisions).
 pub fn history_path_for(session_id: &str) -> Result<PathBuf, String> {
-    let base = dirs::data_dir().ok_or_else(|| "Could not resolve app data directory".to_string())?;
+    let base =
+        dirs::data_dir().ok_or_else(|| "Could not resolve app data directory".to_string())?;
     Ok(base
         .join("zero-desktop")
         .join("session-history")
@@ -351,7 +392,8 @@ pub fn history_path_for(session_id: &str) -> Result<PathBuf, String> {
 /// itself with no discovered protocol method to set a better one - so we
 /// track titles ourselves and overlay them onto `zero sessions list` output.
 fn title_map_path() -> Result<PathBuf, String> {
-    let base = dirs::data_dir().ok_or_else(|| "Could not resolve app data directory".to_string())?;
+    let base =
+        dirs::data_dir().ok_or_else(|| "Could not resolve app data directory".to_string())?;
     Ok(base.join("zero-desktop").join("session-titles.json"))
 }
 
@@ -406,7 +448,8 @@ pub fn remove_session_title(session_id: &str) -> Result<(), String> {
 /// model from `zero config --json` when the session is created and overlay
 /// it the same way session titles are overlaid.
 fn model_map_path() -> Result<PathBuf, String> {
-    let base = dirs::data_dir().ok_or_else(|| "Could not resolve app data directory".to_string())?;
+    let base =
+        dirs::data_dir().ok_or_else(|| "Could not resolve app data directory".to_string())?;
     Ok(base.join("zero-desktop").join("session-models.json"))
 }
 
@@ -458,8 +501,11 @@ pub fn remove_session_model(session_id: &str) -> Result<(), String> {
 /// to the model one in spawn_and_handshake). Absent from the map means
 /// "auto" - no entry is written for that case.
 fn effort_map_path() -> Result<PathBuf, String> {
-    let base = dirs::data_dir().ok_or_else(|| "Could not resolve app data directory".to_string())?;
-    Ok(base.join("zero-desktop").join("session-reasoning-effort.json"))
+    let base =
+        dirs::data_dir().ok_or_else(|| "Could not resolve app data directory".to_string())?;
+    Ok(base
+        .join("zero-desktop")
+        .join("session-reasoning-effort.json"))
 }
 
 static EFFORT_FILE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -522,13 +568,20 @@ pub fn remove_session_effort(session_id: &str) -> Result<(), String> {
 pub struct SessionPlanState {
     #[serde(default = "default_plan_mode")]
     pub mode: String,
-    #[serde(rename = "pendingSpec", skip_serializing_if = "Option::is_none", default)]
+    #[serde(
+        rename = "pendingSpec",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
     pub pending_spec: Option<PendingSpec>,
 }
 
 impl Default for SessionPlanState {
     fn default() -> Self {
-        Self { mode: default_plan_mode(), pending_spec: None }
+        Self {
+            mode: default_plan_mode(),
+            pending_spec: None,
+        }
     }
 }
 
@@ -546,7 +599,8 @@ pub struct PendingSpec {
 }
 
 fn plan_state_path() -> Result<PathBuf, String> {
-    let base = dirs::data_dir().ok_or_else(|| "Could not resolve app data directory".to_string())?;
+    let base =
+        dirs::data_dir().ok_or_else(|| "Could not resolve app data directory".to_string())?;
     Ok(base.join("zero-desktop").join("session-plan-state.json"))
 }
 
@@ -707,19 +761,35 @@ pub async fn fetch_available_models() -> Result<AvailableModels, String> {
         .collect();
     let mut capabilities = HashMap::new();
     for entry in entries {
-        let Some(id) = entry["id"].as_str() else { continue };
+        let Some(id) = entry["id"].as_str() else {
+            continue;
+        };
         let reasoning = entry["reasoning"].as_bool().unwrap_or(false);
         if !reasoning {
             continue;
         }
         let reasoning_efforts = entry["reasoningEfforts"]
             .as_array()
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
             .unwrap_or_default();
-        capabilities.insert(id.to_string(), ModelCapabilityInfo { reasoning, reasoning_efforts });
+        capabilities.insert(
+            id.to_string(),
+            ModelCapabilityInfo {
+                reasoning,
+                reasoning_efforts,
+            },
+        );
     }
 
-    Ok(AvailableModels { models, active: active_model, capabilities })
+    Ok(AvailableModels {
+        models,
+        active: active_model,
+        capabilities,
+    })
 }
 
 /// Appends the advisor-mode instruction (if enabled) to `content`, for use
@@ -751,7 +821,9 @@ fn apply_advisor_instruction(content: &str, config: &crate::advisor::AdvisorConf
 /// in-memory config actually driving `apply_advisor_instruction`'s
 /// `enabled` check - and `get_advisor_config`'s response, which the
 /// frontend trusts over its own local state on every reconnect - had reset.
-fn advisor_config_for_restart(existing: Option<&crate::advisor::AdvisorConfig>) -> crate::advisor::AdvisorConfig {
+fn advisor_config_for_restart(
+    existing: Option<&crate::advisor::AdvisorConfig>,
+) -> crate::advisor::AdvisorConfig {
     match existing {
         Some(config) => config.clone(),
         None => crate::advisor::load_global_config(),
@@ -896,7 +968,12 @@ impl ZeroBridge {
         });
 
         let history_cell: Arc<Mutex<Option<PathBuf>>> = Arc::new(Mutex::new(known_history_path));
-        self.spawn_stdout_reader(session_key.to_string(), peer.clone(), stdout, history_cell.clone());
+        self.spawn_stdout_reader(
+            session_key.to_string(),
+            peer.clone(),
+            stdout,
+            history_cell.clone(),
+        );
 
         peer.request(
             "initialize",
@@ -947,7 +1024,9 @@ impl ZeroBridge {
                 )
                 .await
             {
-                log::warn!("[bridge] failed to reapply session model '{desired_model}' after respawn: {e}");
+                log::warn!(
+                    "[bridge] failed to reapply session model '{desired_model}' after respawn: {e}"
+                );
             }
         } else if let Some(model_id) = active_model_id().await {
             let _ = set_session_model(&session_id, &model_id);
@@ -978,7 +1057,11 @@ impl ZeroBridge {
         // after a crash (only a still-pending plan review matters enough to
         // survive one, and that lives in spec-draft while awaiting a
         // decision).
-        if get_session_plan_state(&session_id).map(|s| s.mode).as_deref() == Some("spec-draft") {
+        if get_session_plan_state(&session_id)
+            .map(|s| s.mode)
+            .as_deref()
+            == Some("spec-draft")
+        {
             if let Err(e) = peer
                 .request(
                     "session/set_mode",
@@ -1081,7 +1164,8 @@ impl ZeroBridge {
                         match kind.as_str() {
                             "agent_thought_chunk" => {
                                 if let Some(ref e) = event {
-                                    pending_thinking.push_str(e.payload["delta"].as_str().unwrap_or(""));
+                                    pending_thinking
+                                        .push_str(e.payload["delta"].as_str().unwrap_or(""));
                                 }
                             }
                             "agent_message_chunk" => {
@@ -1091,7 +1175,8 @@ impl ZeroBridge {
                                     pending_thinking.clear();
                                 }
                                 if let Some(ref e) = event {
-                                    pending_text.push_str(e.payload["delta"].as_str().unwrap_or(""));
+                                    pending_text
+                                        .push_str(e.payload["delta"].as_str().unwrap_or(""));
                                 }
                             }
                             "tool_call" | "tool_call_update" | "plan" => {
@@ -1123,10 +1208,22 @@ impl ZeroBridge {
                                         .map(|s| s.session_id.clone());
                                     if let Some(session_id) = session_id {
                                         let spec = PendingSpec {
-                                            spec_id: e.payload["specId"].as_str().unwrap_or("").to_string(),
-                                            title: e.payload["title"].as_str().unwrap_or("").to_string(),
-                                            file_path: e.payload["filePath"].as_str().unwrap_or("").to_string(),
-                                            relative_path: e.payload["relativePath"].as_str().unwrap_or("").to_string(),
+                                            spec_id: e.payload["specId"]
+                                                .as_str()
+                                                .unwrap_or("")
+                                                .to_string(),
+                                            title: e.payload["title"]
+                                                .as_str()
+                                                .unwrap_or("")
+                                                .to_string(),
+                                            file_path: e.payload["filePath"]
+                                                .as_str()
+                                                .unwrap_or("")
+                                                .to_string(),
+                                            relative_path: e.payload["relativePath"]
+                                                .as_str()
+                                                .unwrap_or("")
+                                                .to_string(),
                                         };
                                         let _ = set_pending_spec(&session_id, spec);
                                     }
@@ -1185,7 +1282,12 @@ impl ZeroBridge {
         let _ = live.child.wait().await;
     }
 
-    pub async fn start(&self, key: String, cwd: PathBuf, resume_id: Option<String>) -> Result<StartedSession, String> {
+    pub async fn start(
+        &self,
+        key: String,
+        cwd: PathBuf,
+        resume_id: Option<String>,
+    ) -> Result<StartedSession, String> {
         {
             let sessions = self.sessions.lock().await;
             if let Some(existing) = sessions.get(&key) {
@@ -1213,7 +1315,8 @@ impl ZeroBridge {
         let history_path = history_path_for(&session_id)?;
 
         let mut sessions = self.sessions.lock().await;
-        let advisor_config = advisor_config_for_restart(sessions.get(&key).map(|s| &s.advisor_config));
+        let advisor_config =
+            advisor_config_for_restart(sessions.get(&key).map(|s| &s.advisor_config));
 
         sessions.insert(
             key.clone(),
@@ -1270,7 +1373,11 @@ impl ZeroBridge {
             .live
             .as_ref()
             .ok_or_else(|| "Failed to reconnect to zero session".to_string())?;
-        Ok((live.peer.clone(), s.session_id.clone(), s.history_path.clone()))
+        Ok((
+            live.peer.clone(),
+            s.session_id.clone(),
+            s.history_path.clone(),
+        ))
     }
 
     /// Send a user message, with an optional image attachment. Fires
@@ -1278,7 +1385,12 @@ impl ZeroBridge {
     /// turn ends) and returns immediately - progress is tracked via
     /// `zero:event`/`zero:permission-request`, same as the app already
     /// expects.
-    pub async fn send(&self, key: String, content: String, file: Option<FileAttachment>) -> Result<(), String> {
+    pub async fn send(
+        &self,
+        key: String,
+        content: String,
+        file: Option<FileAttachment>,
+    ) -> Result<(), String> {
         let (peer, session_id, history_path) = self.ensure_live(&key).await?;
 
         // First message of a session (no title recorded yet) gives it a
@@ -1352,8 +1464,14 @@ impl ZeroBridge {
     /// Answer a pending `session/request_permission` request from the
     /// agent. This is the actual payoff of the ACP migration: unlike the old
     /// exec transport, this reply really reaches the agent.
-    pub async fn respond_to_permission(&self, request_id: String, option_id: String) -> Result<(), String> {
-        log::info!("[bridge] respond_to_permission called: request_id={request_id} option_id={option_id}");
+    pub async fn respond_to_permission(
+        &self,
+        request_id: String,
+        option_id: String,
+    ) -> Result<(), String> {
+        log::info!(
+            "[bridge] respond_to_permission called: request_id={request_id} option_id={option_id}"
+        );
         let pending = self
             .pending_permissions
             .lock()
@@ -1385,7 +1503,10 @@ impl ZeroBridge {
             append_history(&history_path, "permission_decision", &decision).await;
         }
 
-        log::info!("[bridge] sending permission reply: reply_id={} option_id={option_id}", pending.reply_id);
+        log::info!(
+            "[bridge] sending permission reply: reply_id={} option_id={option_id}",
+            pending.reply_id
+        );
         let (peer, _, _) = self.ensure_live(&pending.session_key).await?;
         peer.respond(
             pending.reply_id,
@@ -1414,7 +1535,10 @@ impl ZeroBridge {
         let peer = live.peer.clone();
         let session_id = s.session_id.clone();
         if let Err(e) = peer
-            .notify("session/cancel", serde_json::json!({ "sessionId": session_id }))
+            .notify(
+                "session/cancel",
+                serde_json::json!({ "sessionId": session_id }),
+            )
             .await
         {
             log::warn!("[bridge] session/cancel notify failed ({e}); killing process as fallback");
@@ -1536,7 +1660,11 @@ impl ZeroBridge {
     /// (`.zero/specialists/advisor.md` no workspace desta sessão) com o
     /// modelo escolhido - é isso que faz o advisor de fato rodar num modelo
     /// diferente do executor (ver `advisor::sync_specialist_model`).
-    pub async fn set_advisor_config(&self, key: &str, config: crate::advisor::AdvisorConfig) -> Result<(), String> {
+    pub async fn set_advisor_config(
+        &self,
+        key: &str,
+        config: crate::advisor::AdvisorConfig,
+    ) -> Result<(), String> {
         let mut sessions = self.sessions.lock().await;
         let Some(session) = sessions.get_mut(key) else {
             return Err(format!("No active session for key: {key}"));
@@ -1583,20 +1711,35 @@ mod tests {
 
     #[test]
     fn test_tool_name_from_call_prefers_title() {
-        assert_eq!(tool_name_from_call("call_00_abc", Some("edit_file note.txt")), "edit_file");
-        assert_eq!(tool_name_from_call("call_00_abc", Some("write_file")), "write_file");
+        assert_eq!(
+            tool_name_from_call("call_00_abc", Some("edit_file note.txt")),
+            "edit_file"
+        );
+        assert_eq!(
+            tool_name_from_call("call_00_abc", Some("write_file")),
+            "write_file"
+        );
     }
 
     #[test]
     fn test_tool_name_from_call_strips_counter_when_no_title() {
         assert_eq!(tool_name_from_call("read_file_0", None), "read_file");
-        assert_eq!(tool_name_from_call("list_directory_12", None), "list_directory");
-        assert_eq!(tool_name_from_call("mcp_firecrawl_scrape_3", None), "mcp_firecrawl_scrape");
+        assert_eq!(
+            tool_name_from_call("list_directory_12", None),
+            "list_directory"
+        );
+        assert_eq!(
+            tool_name_from_call("mcp_firecrawl_scrape_3", None),
+            "mcp_firecrawl_scrape"
+        );
     }
 
     #[test]
     fn test_tool_name_from_call_no_counter_suffix_when_no_title() {
-        assert_eq!(tool_name_from_call("request_permissions", None), "request_permissions");
+        assert_eq!(
+            tool_name_from_call("request_permissions", None),
+            "request_permissions"
+        );
     }
 
     #[test]
@@ -1708,7 +1851,10 @@ mod tests {
             event.payload["filePath"],
             "/home/user/project/.zero/specs/2026-07-17-add-foo.md"
         );
-        assert_eq!(event.payload["relativePath"], ".zero/specs/2026-07-17-add-foo.md");
+        assert_eq!(
+            event.payload["relativePath"],
+            ".zero/specs/2026-07-17-add-foo.md"
+        );
     }
 
     #[test]
@@ -1813,7 +1959,10 @@ mod tests {
     #[test]
     fn test_apply_advisor_instruction_disabled_leaves_content_unchanged() {
         let config = crate::advisor::AdvisorConfig::default();
-        assert_eq!(apply_advisor_instruction("oi, tudo bem?", &config), "oi, tudo bem?");
+        assert_eq!(
+            apply_advisor_instruction("oi, tudo bem?", &config),
+            "oi, tudo bem?"
+        );
     }
 
     #[test]
@@ -1824,7 +1973,10 @@ mod tests {
             mode: crate::advisor::AdvisorMode::Max,
         };
         let result = apply_advisor_instruction("oi, tudo bem?", &config);
-        assert!(result.starts_with("oi, tudo bem?"), "user content must come first, unmodified");
+        assert!(
+            result.starts_with("oi, tudo bem?"),
+            "user content must come first, unmodified"
+        );
         assert!(result.contains("advisor_mode"));
         assert!(result.contains("Task"));
     }

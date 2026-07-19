@@ -60,16 +60,22 @@ async fn test_fake_backend_plan_sequence_matches_bridge_contract() {
         }
     });
 
-    let init = timeout(Duration::from_secs(5), peer.request("initialize", serde_json::json!({})))
-        .await
-        .expect("initialize timed out")
-        .expect("initialize should succeed");
+    let init = timeout(
+        Duration::from_secs(5),
+        peer.request("initialize", serde_json::json!({})),
+    )
+    .await
+    .expect("initialize timed out")
+    .expect("initialize should succeed");
     assert_eq!(init["protocolVersion"], 1);
 
-    let session_result = timeout(Duration::from_secs(5), peer.request("session/new", serde_json::json!({})))
-        .await
-        .expect("session/new timed out")
-        .expect("session/new should succeed");
+    let session_result = timeout(
+        Duration::from_secs(5),
+        peer.request("session/new", serde_json::json!({})),
+    )
+    .await
+    .expect("session/new timed out")
+    .expect("session/new should succeed");
     let session_id = session_result["sessionId"].as_str().unwrap().to_string();
     assert_eq!(session_id, "fake-session-1");
 
@@ -77,7 +83,10 @@ async fn test_fake_backend_plan_sequence_matches_bridge_contract() {
     // backend emits several `session/update`s before it answers
     // `session/prompt`, exactly like the real `zero acp` does for a turn
     // that updates its plan mid-flight.
-    let prompt = peer.request("session/prompt", serde_json::json!({ "sessionId": session_id }));
+    let prompt = peer.request(
+        "session/prompt",
+        serde_json::json!({ "sessionId": session_id }),
+    );
     tokio::pin!(prompt);
 
     let mut plan_snapshots: Vec<serde_json::Value> = Vec::new();
@@ -125,14 +134,24 @@ async fn test_fake_backend_plan_sequence_matches_bridge_contract() {
     // {content, status, priority} objects (see bridge.rs's
     // `test_translate_plan_update`), and a real turn interleaves plan
     // updates with tool calls rather than sending the plan only once.
-    assert_eq!(plan_snapshots.len(), 3, "expected pending -> in_progress -> completed snapshots");
+    assert_eq!(
+        plan_snapshots.len(),
+        3,
+        "expected pending -> in_progress -> completed snapshots"
+    );
     assert_eq!(plan_snapshots[0][0]["status"], "pending");
     assert_eq!(plan_snapshots[1][0]["status"], "in_progress");
     assert_eq!(plan_snapshots[2][0]["status"], "completed");
     assert_eq!(plan_snapshots[2][1]["status"], "completed");
     for entry in plan_snapshots[0].as_array().unwrap() {
-        assert!(entry.get("content").is_some(), "entry must have `content` for PlanPanel.vue");
-        assert!(entry.get("status").is_some(), "entry must have `status` for planIcon/planColor");
+        assert!(
+            entry.get("content").is_some(),
+            "entry must have `content` for PlanPanel.vue"
+        );
+        assert!(
+            entry.get("status").is_some(),
+            "entry must have `status` for planIcon/planColor"
+        );
     }
     assert!(saw_tool_call, "expected a tool_call between plan updates");
     assert!(saw_tool_call_update, "expected the tool_call to resolve");

@@ -6,12 +6,15 @@ pub mod mcp_cache;
 pub mod providers;
 pub mod terminal;
 
-use bridge::{history_path_for, LiveSessionInfo, StartedSession, ZeroBridge};
-use bridge::{get_session_title, remove_session_title, set_session_title};
-use bridge::{get_session_model, remove_session_model, set_session_model};
-use bridge::set_session_effort;
-use bridge::{clear_pending_spec, get_session_plan_state, remove_session_plan_state, set_session_mode, SessionPlanState};
 use base64::Engine;
+use bridge::set_session_effort;
+use bridge::{
+    clear_pending_spec, get_session_plan_state, remove_session_plan_state, set_session_mode,
+    SessionPlanState,
+};
+use bridge::{get_session_model, remove_session_model, set_session_model};
+use bridge::{get_session_title, remove_session_title, set_session_title};
+use bridge::{history_path_for, LiveSessionInfo, StartedSession, ZeroBridge};
 use locator::locate_zero;
 use serde::Deserialize;
 use std::io::BufRead;
@@ -238,14 +241,21 @@ fn attachment_kind_for_file(path: &Path, bytes: &[u8]) -> (AttachmentKind, Strin
     if !bytes.contains(&0) && std::str::from_utf8(bytes).is_ok() {
         return (AttachmentKind::Text, "text/plain".to_string());
     }
-    (AttachmentKind::Binary, "application/octet-stream".to_string())
+    (
+        AttachmentKind::Binary,
+        "application/octet-stream".to_string(),
+    )
 }
 
 /// Mime type for a handful of common non-image, non-text document/archive
 /// extensions - `None` when the extension isn't one of these (the caller
 /// falls back to content sniffing, then to the generic octet-stream mime).
 fn binary_mime_for(path: &Path) -> Option<String> {
-    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
     let mime = match ext.as_str() {
         "pdf" => "application/pdf",
         "zip" => "application/zip",
@@ -292,7 +302,11 @@ async fn read_file_attachment(path: String) -> Result<FileAttachment, String> {
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "file".to_string());
 
-    Ok(FileAttachment { mime_type, data, name })
+    Ok(FileAttachment {
+        mime_type,
+        data,
+        name,
+    })
 }
 
 /// One entry in a directory listing, for the file explorer tree.
@@ -352,7 +366,8 @@ const RELEVANT_HISTORY_EVENT_TYPES: &[&str] = &[
 ];
 
 fn parse_events_jsonl(path: &PathBuf) -> Result<Vec<SessionEvent>, String> {
-    let file = std::fs::File::open(path).map_err(|e| format!("Failed to open session events: {e}"))?;
+    let file =
+        std::fs::File::open(path).map_err(|e| format!("Failed to open session events: {e}"))?;
     let reader = std::io::BufReader::new(file);
     let mut events = Vec::new();
 
@@ -899,7 +914,9 @@ async fn get_session_advisor_config(
     state: tauri::State<'_, Arc<ZeroBridge>>,
     key: String,
 ) -> Result<advisor::AdvisorConfig, String> {
-    state.get_advisor_config(&key).await
+    state
+        .get_advisor_config(&key)
+        .await
         .ok_or_else(|| format!("No active session for key: {}", key))
 }
 
@@ -939,7 +956,10 @@ async fn use_zero_provider(name: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn check_zero_provider(name: String, connectivity: bool) -> Result<providers::ProviderCheckResult, String> {
+async fn check_zero_provider(
+    name: String,
+    connectivity: bool,
+) -> Result<providers::ProviderCheckResult, String> {
     providers::check(&name, connectivity).await
 }
 
@@ -966,7 +986,8 @@ pub fn run() {
             // not a bare `cargo run` binary). See docs/en/architecture/decisions/
             // 005-tauri-updater-for-appimage-self-update.md.
             if std::env::var_os("APPIMAGE").is_some() {
-                app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+                app.handle()
+                    .plugin(tauri_plugin_updater::Builder::new().build())?;
             }
 
             let bridge = Arc::new(ZeroBridge::new(app.handle().clone()));
@@ -1059,7 +1080,8 @@ mod attachment_tests {
 
     #[test]
     fn unknown_extension_with_binary_bytes_is_accepted_as_binary() {
-        let (kind, mime) = attachment_kind_for_file(Path::new("data.bin"), &[0xFF, 0xFE, 0x00, 0x01]);
+        let (kind, mime) =
+            attachment_kind_for_file(Path::new("data.bin"), &[0xFF, 0xFE, 0x00, 0x01]);
         assert_eq!(kind, AttachmentKind::Binary);
         assert_eq!(mime, "application/octet-stream");
     }
@@ -1081,7 +1103,8 @@ mod attachment_tests {
 
     #[test]
     fn known_binary_extension_gets_specific_mime_type() {
-        let (kind, mime) = attachment_kind_for_file(Path::new("report.pdf"), &[0x25, 0x50, 0x44, 0x46]);
+        let (kind, mime) =
+            attachment_kind_for_file(Path::new("report.pdf"), &[0x25, 0x50, 0x44, 0x46]);
         assert_eq!(kind, AttachmentKind::Binary);
         assert_eq!(mime, "application/pdf");
     }
@@ -1126,11 +1149,19 @@ mod session_tree_tests {
         assert_eq!(root.session_id, "root");
         assert_eq!(root.children.len(), 2);
 
-        let child_a = root.children.iter().find(|c| c.session_id == "child-a").unwrap();
+        let child_a = root
+            .children
+            .iter()
+            .find(|c| c.session_id == "child-a")
+            .unwrap();
         assert_eq!(child_a.children.len(), 1);
         assert_eq!(child_a.children[0].session_id, "grandchild");
 
-        let child_b = root.children.iter().find(|c| c.session_id == "child-b").unwrap();
+        let child_b = root
+            .children
+            .iter()
+            .find(|c| c.session_id == "child-b")
+            .unwrap();
         assert!(child_b.children.is_empty());
     }
 

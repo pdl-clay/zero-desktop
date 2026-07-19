@@ -123,7 +123,9 @@ pub struct ProviderCheckResult {
 }
 
 fn zero_path() -> Result<std::path::PathBuf, String> {
-    Ok(locate_zero().map_err(|e| format!("Failed to locate zero CLI: {e}"))?.path)
+    Ok(locate_zero()
+        .map_err(|e| format!("Failed to locate zero CLI: {e}"))?
+        .path)
 }
 
 /// Lista o catálogo de provedores conhecidos pelo `zero` CLI.
@@ -179,7 +181,11 @@ pub async fn list_configured() -> Result<Vec<ConfiguredProvider>, String> {
 pub async fn add(req: &AddProviderRequest) -> Result<(), String> {
     let path = zero_path()?;
     let mut cmd = Command::new(&path);
-    cmd.arg("providers").arg("add").arg(&req.catalog_id).arg("--name").arg(&req.name);
+    cmd.arg("providers")
+        .arg("add")
+        .arg(&req.catalog_id)
+        .arg("--name")
+        .arg(&req.name);
 
     if let Some(model) = &req.model {
         if !model.is_empty() {
@@ -218,7 +224,10 @@ pub async fn add(req: &AddProviderRequest) -> Result<(), String> {
         cmd.arg("--set-active");
     }
 
-    let output = cmd.output().await.map_err(|e| format!("Failed to run zero providers add: {e}"))?;
+    let output = cmd
+        .output()
+        .await
+        .map_err(|e| format!("Failed to run zero providers add: {e}"))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!("zero providers add failed: {stderr}"));
@@ -274,11 +283,15 @@ pub async fn check(name: &str, connectivity: bool) -> Result<ProviderCheckResult
     }
     cmd.arg("--json");
 
-    let output = cmd.output().await.map_err(|e| format!("Failed to run zero providers check: {e}"))?;
+    let output = cmd
+        .output()
+        .await
+        .map_err(|e| format!("Failed to run zero providers check: {e}"))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!("zero providers check failed: {stderr}"));
     }
 
-    serde_json::from_slice(&output.stdout).map_err(|e| format!("Failed to parse providers check JSON: {e}"))
+    serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("Failed to parse providers check JSON: {e}"))
 }

@@ -46,7 +46,10 @@ pub fn parse_line(line: &str) -> Option<AcpMessage> {
     let obj = value.as_object()?;
 
     if let Some(method) = obj.get("method").and_then(|m| m.as_str()) {
-        let params = obj.get("params").cloned().unwrap_or(serde_json::Value::Null);
+        let params = obj
+            .get("params")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
         return Some(match obj.get("id") {
             Some(id) => AcpMessage::Request {
                 id: id.clone(),
@@ -76,7 +79,8 @@ pub fn parse_line(line: &str) -> Option<AcpMessage> {
     None
 }
 
-type PendingMap = Arc<Mutex<HashMap<u64, oneshot::Sender<Result<serde_json::Value, serde_json::Value>>>>>;
+type PendingMap =
+    Arc<Mutex<HashMap<u64, oneshot::Sender<Result<serde_json::Value, serde_json::Value>>>>>;
 
 /// Sends requests/responses to an ACP agent process and correlates
 /// responses back to callers. Does not own reading stdout - the caller
@@ -142,7 +146,11 @@ impl AcpPeer {
     }
 
     /// Reply to a request the agent sent us (e.g. `session/request_permission`).
-    pub async fn respond(&self, id: serde_json::Value, result: serde_json::Value) -> Result<(), String> {
+    pub async fn respond(
+        &self,
+        id: serde_json::Value,
+        result: serde_json::Value,
+    ) -> Result<(), String> {
         let line = serde_json::json!({
             "jsonrpc": "2.0",
             "id": id,
@@ -166,7 +174,11 @@ impl AcpPeer {
     }
 
     /// Called by the reader loop when a `Response` message arrives.
-    pub async fn resolve_response(&self, id: u64, result: Result<serde_json::Value, serde_json::Value>) {
+    pub async fn resolve_response(
+        &self,
+        id: u64,
+        result: Result<serde_json::Value, serde_json::Value>,
+    ) {
         if let Some(tx) = self.pending.lock().await.remove(&id) {
             let _ = tx.send(result);
         }
@@ -201,7 +213,8 @@ mod tests {
 
     #[test]
     fn test_parse_response_with_error() {
-        let line = r#"{"jsonrpc":"2.0","id":100,"error":{"code":-32601,"message":"method not found"}}"#;
+        let line =
+            r#"{"jsonrpc":"2.0","id":100,"error":{"code":-32601,"message":"method not found"}}"#;
         match parse_line(line) {
             Some(AcpMessage::Response { id, result: Err(e) }) => {
                 assert_eq!(id, 100);
@@ -275,7 +288,10 @@ mod tests {
             .expect("expected a line echoed back by `cat`");
 
         let value: serde_json::Value = serde_json::from_str(&line).unwrap();
-        assert!(value.get("id").is_none(), "a notification must not carry an id field");
+        assert!(
+            value.get("id").is_none(),
+            "a notification must not carry an id field"
+        );
         assert_eq!(value["method"], "session/cancel");
         assert_eq!(value["params"]["sessionId"], "s1");
 
@@ -553,15 +569,19 @@ mod tests {
         });
 
         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-        peer.notify("session/cancel", serde_json::json!({"sessionId": session_id}))
-            .await
-            .expect("session/cancel notification should send successfully");
+        peer.notify(
+            "session/cancel",
+            serde_json::json!({"sessionId": session_id}),
+        )
+        .await
+        .expect("session/cancel notification should send successfully");
 
-        let cancelled_result = tokio::time::timeout(std::time::Duration::from_secs(20), prompt_task)
-            .await
-            .expect("session/prompt should resolve promptly after cancel")
-            .expect("prompt task should not panic")
-            .expect("cancelled session/prompt should still return a result, not an error");
+        let cancelled_result =
+            tokio::time::timeout(std::time::Duration::from_secs(20), prompt_task)
+                .await
+                .expect("session/prompt should resolve promptly after cancel")
+                .expect("prompt task should not panic")
+                .expect("cancelled session/prompt should still return a result, not an error");
         assert_eq!(cancelled_result["stopReason"], "cancelled");
 
         // The same process/session must still be alive and responsive - no
